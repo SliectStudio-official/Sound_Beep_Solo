@@ -789,86 +789,9 @@
     ctx.clip();
 
     if (liveSmooth) {
-      if (!liveEcgBuffer || liveEcgBufferSize !== Math.round(plotW)) {
-        liveEcgBufferSize = Math.round(plotW);
-        liveEcgBuffer = new Float32Array(liveEcgBufferSize);
-        liveEcgPhase = 0;
-        liveEcgSubPixel = 0;
-      }
-      var freqScale = 3 / plotW;
-      liveEcgSubPixel += (freq / 8000) * 200 * (dt / 1000);
-      var scrollPixels = Math.floor(liveEcgSubPixel);
-      liveEcgSubPixel -= scrollPixels;
-      if (scrollPixels >= liveEcgBufferSize) scrollPixels = liveEcgBufferSize - 1;
-
-      liveEcgPhase += (freq / 8000) * 800 * (dt / 1000);
-
-      if (scrollPixels > 0) {
-        liveEcgBuffer.copyWithin(scrollPixels, 0, liveEcgBufferSize - scrollPixels);
-      }
-      for (var i = scrollPixels - 1; i >= 0; i--) {
-        liveEcgBuffer[i] = sampleWave(waveType, liveEcgPhase - i * freqScale);
-      }
-
-      ctx.strokeStyle = colors.waveGlow;
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      for (var xi = 0; xi < liveEcgBufferSize; xi++) {
-        var yGlow = midY - liveEcgBuffer[xi] * ampRange;
-        if (xi === 0) ctx.moveTo(margin.left + xi, yGlow);
-        else ctx.lineTo(margin.left + xi, yGlow);
-      }
-      ctx.stroke();
-
-      ctx.strokeStyle = colors.wave;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (var xi2 = 0; xi2 < liveEcgBufferSize; xi2++) {
-        var yVal = midY - liveEcgBuffer[xi2] * ampRange;
-        if (xi2 === 0) ctx.moveTo(margin.left + xi2, yVal);
-        else ctx.lineTo(margin.left + xi2, yVal);
-      }
-      ctx.stroke();
-
-      var cursorX = margin.left;
-      var cursorY = midY - liveEcgBuffer[0] * ampRange;
-      ctx.beginPath();
-      ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
-      ctx.fillStyle = colors.wave;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(cursorX, cursorY, 6, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
-      ctx.fill();
+      drawEcgWaveform(ctx, freq, waveType, volume, plotW, plotH, margin, midY, ampRange, colors, dt);
     } else {
-      var totalCycles = 3;
-      var freqScale = totalCycles / plotW;
-      var scrollSpeed = (freq / 8000) * 800;
-      livePhase += scrollSpeed * (dt / 1000);
-
-      ctx.strokeStyle = colors.waveGlow;
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      for (var px = 0; px < plotW; px += 1) {
-        var phaseGlow = (px * freqScale) + livePhase;
-        var valGlow = sampleWave(waveType, phaseGlow);
-        var yGlow = midY - valGlow * ampRange;
-        if (px === 0) ctx.moveTo(margin.left + px, yGlow);
-        else ctx.lineTo(margin.left + px, yGlow);
-      }
-      ctx.stroke();
-
-      ctx.strokeStyle = colors.wave;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (var px2 = 0; px2 < plotW; px2 += 1) {
-        var phase = (px2 * freqScale) + livePhase;
-        var val = sampleWave(waveType, phase);
-        var y = midY - val * ampRange;
-        if (px2 === 0) ctx.moveTo(margin.left + px2, y);
-        else ctx.lineTo(margin.left + px2, y);
-      }
-      ctx.stroke();
+      drawOscilloscopeWaveform(ctx, freq, waveType, volume, plotW, plotH, margin, midY, ampRange, colors, dt);
     }
 
     ctx.restore();
@@ -882,6 +805,108 @@
     if (lwpDur) lwpDur.textContent = getDuration() + " ms";
     if (lwpGap) lwpGap.textContent = getGap() + " ms";
     if (lwpFps) lwpFps.textContent = liveFpsDisplay;
+  }
+
+  function drawEcgWaveform(ctx, freq, waveType, volume, plotW, plotH, margin, midY, ampRange, colors, dt) {
+    var targetBufferSize = Math.max(1, Math.round(plotW));
+    if (!liveEcgBuffer || liveEcgBufferSize !== targetBufferSize) {
+      liveEcgBufferSize = targetBufferSize;
+      liveEcgBuffer = new Float32Array(liveEcgBufferSize);
+      liveEcgPhase = 0;
+      liveEcgSubPixel = 0;
+    }
+
+    var timeWindowMs = 20;
+    var samplesPerMs = liveEcgBufferSize / timeWindowMs;
+    var phasePerMs = freq / 1000;
+    var phasePerPixel = phasePerMs / samplesPerMs;
+
+    var scrollSpeedPixelsPerMs = 1;
+    var scrollPixels = scrollSpeedPixelsPerMs * dt;
+    liveEcgSubPixel += scrollPixels;
+    var intScroll = Math.floor(liveEcgSubPixel);
+    liveEcgSubPixel -= intScroll;
+    if (intScroll >= liveEcgBufferSize) intScroll = liveEcgBufferSize;
+
+    var phaseAdvance = phasePerPixel * intScroll;
+    liveEcgPhase += phaseAdvance;
+
+    if (intScroll > 0) {
+      liveEcgBuffer.copyWithin(intScroll, 0, liveEcgBufferSize - intScroll);
+    }
+
+    for (var i = intScroll - 1; i >= 0; i--) {
+      var samplePhase = liveEcgPhase - (intScroll - 1 - i) * phasePerPixel;
+      liveEcgBuffer[i] = sampleWave(waveType, samplePhase) * volume;
+    }
+
+    ctx.strokeStyle = colors.waveGlow;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    for (var xi = 0; xi < liveEcgBufferSize; xi++) {
+      var x = margin.left + xi;
+      var yGlow = midY - liveEcgBuffer[xi] * ampRange;
+      if (xi === 0) ctx.moveTo(x, yGlow);
+      else ctx.lineTo(x, yGlow);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = colors.wave;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (var xi2 = 0; xi2 < liveEcgBufferSize; xi2++) {
+      var x2 = margin.left + xi2;
+      var yVal = midY - liveEcgBuffer[xi2] * ampRange;
+      if (xi2 === 0) ctx.moveTo(x2, yVal);
+      else ctx.lineTo(x2, yVal);
+    }
+    ctx.stroke();
+
+    var cursorX = margin.left + liveEcgBufferSize - 1;
+    var cursorY = midY - liveEcgBuffer[liveEcgBufferSize - 1] * ampRange;
+    ctx.beginPath();
+    ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = colors.wave;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cursorX, cursorY, 6, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
+    ctx.fill();
+  }
+
+  function drawOscilloscopeWaveform(ctx, freq, waveType, volume, plotW, plotH, margin, midY, ampRange, colors, dt) {
+    var cyclesToShow = 3;
+    var periodPixels = plotW / cyclesToShow;
+    var phasePerPixel = 1 / periodPixels;
+
+    var scrollSpeedHz = freq * 0.5;
+    livePhase += scrollSpeedHz * (dt / 1000);
+
+    ctx.strokeStyle = colors.waveGlow;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    for (var px = 0; px < plotW; px += 1) {
+      var phaseGlow = (px * phasePerPixel) - livePhase;
+      var valGlow = sampleWave(waveType, phaseGlow) * volume;
+      var yGlow = midY - valGlow * ampRange;
+      var x = margin.left + px;
+      if (px === 0) ctx.moveTo(x, yGlow);
+      else ctx.lineTo(x, yGlow);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = colors.wave;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (var px2 = 0; px2 < plotW; px2 += 1) {
+      var phase = (px2 * phasePerPixel) - livePhase;
+      var val = sampleWave(waveType, phase) * volume;
+      var y = midY - val * ampRange;
+      var x2 = margin.left + px2;
+      if (px2 === 0) ctx.moveTo(x2, y);
+      else ctx.lineTo(x2, y);
+    }
+    ctx.stroke();
   }
 
   function drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors) {
