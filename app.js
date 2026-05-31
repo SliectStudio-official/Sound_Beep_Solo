@@ -1099,7 +1099,7 @@
   });
 
   liveFpsSelect.addEventListener("change", function () {
-    liveTargetFps = parseInt(liveFpsSelect.value) || 30;
+    liveTargetFps = parseFloat(liveFpsSelect.value) || 30;
     liveFrameInterval = 1000 / liveTargetFps;
   });
 
