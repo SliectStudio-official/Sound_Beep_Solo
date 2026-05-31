@@ -696,10 +696,6 @@
     var freq = getFreq();
     var waveType = getWave();
     var volume = getVolume();
-    var durationMs = getDuration();
-    var gapMs = getGap();
-
-    liveTimeAccum += dt;
 
     var colors = {
       bg: "#181715",
@@ -787,11 +783,6 @@
     ctx.fillRect(volBarX, midY - volFillH / 2, volBarW, volFillH);
     ctx.globalAlpha = 1;
 
-    var periodMs = durationMs + gapMs;
-    var hasBurst = gapMs > 0 && periodMs > 0;
-    var periodPhase = hasBurst ? (freq / 1000) * (periodMs / 1000) : 0;
-    var durationPhase = hasBurst ? (freq / 1000) * (durationMs / 1000) : 0;
-
     ctx.save();
     ctx.beginPath();
     ctx.rect(margin.left, margin.top, plotW, plotH);
@@ -810,20 +801,13 @@
       liveEcgSubPixel -= scrollPixels;
       if (scrollPixels >= liveEcgBufferSize) scrollPixels = liveEcgBufferSize - 1;
 
-      var phaseStep = (freq / 8000) * 800 * (dt / 1000);
-      liveEcgPhase += phaseStep;
+      liveEcgPhase += (freq / 8000) * 800 * (dt / 1000);
 
       if (scrollPixels > 0) {
         liveEcgBuffer.copyWithin(scrollPixels, 0, liveEcgBufferSize - scrollPixels);
       }
       for (var i = scrollPixels - 1; i >= 0; i--) {
-        var samplePhase = liveEcgPhase - i * freqScale;
-        var env = 1;
-        if (hasBurst) {
-          var pip = ((samplePhase % periodPhase) + periodPhase) % periodPhase;
-          env = (pip < durationPhase) ? 1 : 0;
-        }
-        liveEcgBuffer[i] = sampleWave(waveType, samplePhase) * env;
+        liveEcgBuffer[i] = sampleWave(waveType, liveEcgPhase - i * freqScale);
       }
 
       ctx.strokeStyle = colors.waveGlow;
@@ -868,12 +852,7 @@
       for (var px = 0; px < plotW; px += 1) {
         var phaseGlow = (px * freqScale) + livePhase;
         var valGlow = sampleWave(waveType, phaseGlow);
-        var envGlow = 1;
-        if (hasBurst) {
-          var pipGlow = ((phaseGlow % periodPhase) + periodPhase) % periodPhase;
-          envGlow = (pipGlow < durationPhase) ? 1 : 0;
-        }
-        var yGlow = midY - valGlow * ampRange * envGlow;
+        var yGlow = midY - valGlow * ampRange;
         if (px === 0) ctx.moveTo(margin.left + px, yGlow);
         else ctx.lineTo(margin.left + px, yGlow);
       }
@@ -885,12 +864,7 @@
       for (var px2 = 0; px2 < plotW; px2 += 1) {
         var phase = (px2 * freqScale) + livePhase;
         var val = sampleWave(waveType, phase);
-        var envN = 1;
-        if (hasBurst) {
-          var pip = ((phase % periodPhase) + periodPhase) % periodPhase;
-          envN = (pip < durationPhase) ? 1 : 0;
-        }
-        var y = midY - val * ampRange * envN;
+        var y = midY - val * ampRange;
         if (px2 === 0) ctx.moveTo(margin.left + px2, y);
         else ctx.lineTo(margin.left + px2, y);
       }
