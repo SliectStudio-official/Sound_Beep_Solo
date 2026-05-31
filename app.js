@@ -768,11 +768,11 @@
     if (volume < 1) {
       ctx.fillStyle = "rgba(250, 249, 245, 0.35)";
       if (Math.abs(curAmpPx - refAmpPx) < labelOffset) {
-        ctx.fillText("100%", margin.left - 4, midY - refAmpRange + labelOffset);
-        ctx.fillText("-100%", margin.left - 4, midY + refAmpRange - labelOffset);
+        ctx.fillText("100%", margin.left - 4, midY - baseAmpRange + labelOffset);
+        ctx.fillText("-100%", margin.left - 4, midY + baseAmpRange - labelOffset);
       } else {
-        ctx.fillText("100%", margin.left - 4, midY - refAmpRange);
-        ctx.fillText("-100%", margin.left - 4, midY + refAmpRange);
+        ctx.fillText("100%", margin.left - 4, midY - baseAmpRange);
+        ctx.fillText("-100%", margin.left - 4, midY + baseAmpRange);
       }
     }
 
