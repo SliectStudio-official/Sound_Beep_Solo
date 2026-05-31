@@ -711,10 +711,14 @@
       highlight: "#faf9f5"
     };
 
-    var margin = { top: 8, right: 8, bottom: 56, left: 8 };
+    var margin = { top: 8, right: 8, bottom: 56, left: 36 };
     var plotW = w - margin.left - margin.right;
     var plotH = h - margin.top - margin.bottom;
     var midY = margin.top + plotH / 2;
+
+    var autoScaleMin = 0.6;
+    var effectiveVolume = volume;
+    var displayScale = 1 / Math.max(volume, autoScaleMin);
 
     ctx.fillStyle = colors.bg;
     ctx.fillRect(0, 0, w, h);
@@ -728,19 +732,63 @@
     ctx.stroke();
     ctx.setLineDash([]);
 
+    var ampRange = plotH * 0.44;
+    var scaledAmpRange = ampRange * displayScale;
     ctx.strokeStyle = colors.grid;
     ctx.lineWidth = 0.5;
     ctx.setLineDash([2, 6]);
-    var ampRange = plotH * 0.44;
     ctx.beginPath();
-    ctx.moveTo(margin.left, midY - ampRange);
-    ctx.lineTo(w - margin.right, midY - ampRange);
+    ctx.moveTo(margin.left, midY - scaledAmpRange);
+    ctx.lineTo(w - margin.right, midY - scaledAmpRange);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(margin.left, midY + ampRange);
-    ctx.lineTo(w - margin.right, midY + ampRange);
+    ctx.moveTo(margin.left, midY + scaledAmpRange);
+    ctx.lineTo(w - margin.right, midY + scaledAmpRange);
     ctx.stroke();
     ctx.setLineDash([]);
+
+    ctx.fillStyle = colors.text;
+    ctx.font = "9px monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    var volPctForScale = Math.round(volume * 100);
+    ctx.fillText(volPctForScale + "%", margin.left - 4, midY);
+    ctx.fillText("0%", margin.left - 4, midY - scaledAmpRange);
+    ctx.fillText("0%", margin.left - 4, midY + scaledAmpRange);
+
+    if (volume < 1) {
+      ctx.strokeStyle = "rgba(250, 249, 245, 0.04)";
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([1, 4]);
+      var actualAmpPx = ampRange * volume * displayScale;
+      ctx.beginPath();
+      ctx.moveTo(margin.left, midY - actualAmpPx);
+      ctx.lineTo(w - margin.right, midY - actualAmpPx);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(margin.left, midY + actualAmpPx);
+      ctx.lineTo(w - margin.right, midY + actualAmpPx);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "rgba(204, 120, 92, 0.5)";
+      ctx.font = "8px monospace";
+      ctx.textAlign = "right";
+      ctx.fillText(volPctForScale + "%", margin.left - 4, midY - actualAmpPx);
+      ctx.fillText(volPctForScale + "%", margin.left - 4, midY + actualAmpPx);
+    }
+
+    var volBarH = plotH * 0.5;
+    var volBarW = 3;
+    var volBarX = margin.left - 2;
+    var volBarTop = midY - volBarH / 2;
+    ctx.fillStyle = "rgba(250, 249, 245, 0.04)";
+    ctx.fillRect(volBarX, volBarTop, volBarW, volBarH);
+    var volFillH = volBarH * volume;
+    ctx.fillStyle = colors.wave;
+    ctx.globalAlpha = 0.6;
+    ctx.fillRect(volBarX, midY - volFillH / 2, volBarW, volFillH);
+    ctx.globalAlpha = 1;
 
     ctx.save();
     ctx.beginPath();
@@ -774,7 +822,7 @@
       ctx.lineWidth = 5;
       ctx.beginPath();
       for (var xi = 0; xi < liveEcgBufferSize; xi++) {
-        var yGlow = midY - liveEcgBuffer[xi] * ampRange;
+        var yGlow = midY - liveEcgBuffer[xi] * scaledAmpRange;
         if (xi === 0) ctx.moveTo(margin.left + xi, yGlow);
         else ctx.lineTo(margin.left + xi, yGlow);
       }
@@ -784,14 +832,14 @@
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       for (var xi2 = 0; xi2 < liveEcgBufferSize; xi2++) {
-        var yVal = midY - liveEcgBuffer[xi2] * ampRange;
+        var yVal = midY - liveEcgBuffer[xi2] * scaledAmpRange;
         if (xi2 === 0) ctx.moveTo(margin.left + xi2, yVal);
         else ctx.lineTo(margin.left + xi2, yVal);
       }
       ctx.stroke();
 
       var cursorX = margin.left;
-      var cursorY = midY - liveEcgBuffer[0] * ampRange;
+      var cursorY = midY - liveEcgBuffer[0] * scaledAmpRange;
       ctx.beginPath();
       ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
       ctx.fillStyle = colors.wave;
@@ -820,7 +868,7 @@
         var valGlow = sampleWave(waveType, phaseGlow);
         var pixelTimeGlow = viewTimeStart + (x / pixelsPerMs);
         var envGlow = burstEnvelope(pixelTimeGlow, durationMs, gapMs);
-        var yGlow = midY - valGlow * ampRange * volume * envGlow;
+        var yGlow = midY - valGlow * scaledAmpRange * volume * envGlow;
         if (x === -glowMargin) ctx.moveTo(x, yGlow);
         else ctx.lineTo(x, yGlow);
       }
@@ -834,7 +882,7 @@
         var val = sampleWave(waveType, phase);
         var pixelTime = viewTimeStart + (x / pixelsPerMs);
         var env = burstEnvelope(pixelTime, durationMs, gapMs);
-        var y = midY - val * ampRange * volume * env;
+        var y = midY - val * scaledAmpRange * volume * env;
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
