@@ -28,6 +28,7 @@
   var liveEcgBufferSize = 0;
   var liveEcgPhase = 0;
   var liveEcgSubPixel = 0;
+  var liveTimeAccum = 0;
 
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -236,6 +237,18 @@
       case "triangle": return 2 * Math.abs(2 * (phase - Math.floor(phase + 0.5))) - 1;
       default: return Math.sin(2 * Math.PI * phase);
     }
+  }
+
+  function burstEnvelope(timeMs, durationMs, gapMs) {
+    var period = durationMs + gapMs;
+    if (period <= 0) return 1;
+    var t = timeMs % period;
+    if (t >= durationMs) return 0;
+    var attackMs = Math.min(3, durationMs * 0.05);
+    var releaseMs = Math.min(3, durationMs * 0.05);
+    if (t < attackMs) return t / attackMs;
+    if (t > durationMs - releaseMs) return (durationMs - t) / releaseMs;
+    return 1;
   }
 
   function generateSamples(freq, durationMs, wave, volume) {
@@ -681,6 +694,10 @@
     var freq = getFreq();
     var waveType = getWave();
     var volume = getVolume();
+    var durationMs = getDuration();
+    var gapMs = getGap();
+
+    liveTimeAccum += dt;
 
     var colors = {
       bg: "#181715",
@@ -747,7 +764,9 @@
         liveEcgPhase += scrollPixels * freqScale;
       }
       for (var i = 0; i < scrollPixels; i++) {
-        liveEcgBuffer[i] = sampleWave(waveType, liveEcgPhase - i * freqScale) * volume;
+        var pixelTime = liveTimeAccum - (scrollPixels - i) * (dt / scrollPixels);
+        var env = burstEnvelope(pixelTime, durationMs, gapMs);
+        liveEcgBuffer[i] = sampleWave(waveType, liveEcgPhase - i * freqScale) * volume * env;
       }
 
       var glowMargin = 4;
@@ -788,6 +807,10 @@
       var scrollSpeed = (freq / 8000) * 800;
       livePhase += scrollSpeed * (dt / 1000);
 
+      var periodMs = durationMs + gapMs;
+      var pixelsPerMs = plotW / (periodMs * 3 || 300);
+      var viewTimeStart = liveTimeAccum - (plotW / pixelsPerMs);
+
       var glowMargin = 4;
       ctx.strokeStyle = colors.waveGlow;
       ctx.lineWidth = 5;
@@ -795,7 +818,9 @@
       for (var x = -glowMargin; x < w + glowMargin; x += 1) {
         var phaseGlow = (x * freqScale) + livePhase;
         var valGlow = sampleWave(waveType, phaseGlow);
-        var yGlow = midY - valGlow * ampRange * volume;
+        var pixelTimeGlow = viewTimeStart + (x / pixelsPerMs);
+        var envGlow = burstEnvelope(pixelTimeGlow, durationMs, gapMs);
+        var yGlow = midY - valGlow * ampRange * volume * envGlow;
         if (x === -glowMargin) ctx.moveTo(x, yGlow);
         else ctx.lineTo(x, yGlow);
       }
@@ -807,7 +832,9 @@
       for (var x = 0; x < w; x += 1) {
         var phase = (x * freqScale) + livePhase;
         var val = sampleWave(waveType, phase);
-        var y = midY - val * ampRange * volume;
+        var pixelTime = viewTimeStart + (x / pixelsPerMs);
+        var env = burstEnvelope(pixelTime, durationMs, gapMs);
+        var y = midY - val * ampRange * volume * env;
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
@@ -1063,12 +1090,14 @@
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveTimeAccum = 0;
     } else {
       btnLiveSmooth.classList.remove("smooth-active");
       smoothLabel.textContent = "平滑";
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveTimeAccum = 0;
     }
   });
 
@@ -1077,6 +1106,7 @@
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveTimeAccum = 0;
       drawLiveFrame(liveFrameInterval);
     } catch (e) {
       setLiveError("手动刷新失败");
