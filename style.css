@@ -517,6 +517,7 @@ button:disabled {
 .live-ctrl-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 4px 10px;
   font-family: var(--font-body);
@@ -550,6 +551,11 @@ button:disabled {
 
 .pause-label {
   font-size: 12px;
+}
+
+.refresh-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .live-fps-control {
@@ -635,7 +641,7 @@ button:disabled {
   left: 0;
   right: 0;
   background: linear-gradient(to bottom, rgba(24, 23, 21, 0), rgba(24, 23, 21, 0.85) 20%, rgba(24, 23, 21, 0.95));
-  padding: 24px 10px 8px;
+  padding: 28px 10px 8px;
   pointer-events: none;
   display: flex;
   flex-direction: column;

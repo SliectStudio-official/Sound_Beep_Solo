@@ -598,7 +598,7 @@
       highlight: "#faf9f5"
     };
 
-    var margin = { top: 8, right: 8, bottom: 44, left: 8 };
+    var margin = { top: 8, right: 8, bottom: 56, left: 8 };
     var plotW = w - margin.left - margin.right;
     var plotH = h - margin.top - margin.bottom;
     var midY = margin.top + plotH / 2;
@@ -903,6 +903,14 @@
     resizeTimeout = setTimeout(function () {
       if (currentWaveformData) { drawWaveform(currentWaveformData); }
     }, 150);
+  });
+
+  $("#btnLiveRefresh").addEventListener("click", function () {
+    try {
+      drawLiveFrame();
+    } catch (e) {
+      setLiveError("手动刷新失败");
+    }
   });
 
   btnLivePause.addEventListener("click", function () {
