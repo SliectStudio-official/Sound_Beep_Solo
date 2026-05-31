@@ -697,17 +697,8 @@
     var plotH = h - margin.top - margin.bottom;
     var midY = margin.top + plotH / 2;
 
-    if (liveSmooth && liveOffscreen) {
-      ctx.fillStyle = colors.bg;
-      ctx.fillRect(0, 0, w, h);
-
-      ctx.globalAlpha = 1 - liveSmoothAlpha;
-      ctx.drawImage(liveOffscreen, 0, 0, pw, ph, 0, 0, w, h);
-      ctx.globalAlpha = 1;
-    } else {
-      ctx.fillStyle = colors.bg;
-      ctx.fillRect(0, 0, w, h);
-    }
+    ctx.fillStyle = colors.bg;
+    ctx.fillRect(0, 0, w, h);
 
     ctx.strokeStyle = colors.gridMajor;
     ctx.lineWidth = 1;
@@ -731,6 +722,17 @@
     ctx.lineTo(w - margin.right, midY + ampRange);
     ctx.stroke();
     ctx.setLineDash([]);
+
+    if (liveSmooth && liveOffscreen) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(margin.left, margin.top, plotW, plotH);
+      ctx.clip();
+      ctx.globalAlpha = liveSmoothAlpha;
+      ctx.drawImage(liveOffscreen, 0, 0, pw, ph, 0, 0, w, h);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
 
     ctx.save();
     ctx.beginPath();
@@ -774,7 +776,37 @@
 
     if (liveSmooth && liveOffscreen && liveOffscreenCtx) {
       liveOffscreenCtx.clearRect(0, 0, pw, ph);
-      liveOffscreenCtx.drawImage(canvas, 0, 0);
+      liveOffscreenCtx.save();
+      liveOffscreenCtx.scale(dpr, dpr);
+      liveOffscreenCtx.beginPath();
+      liveOffscreenCtx.rect(margin.left, margin.top, plotW, plotH);
+      liveOffscreenCtx.clip();
+
+      liveOffscreenCtx.strokeStyle = colors.waveGlow;
+      liveOffscreenCtx.lineWidth = 5;
+      liveOffscreenCtx.beginPath();
+      for (var x2 = -glowMargin; x2 < w + glowMargin; x2 += 1) {
+        var pg = (x2 * freqScale) + livePhase;
+        var vg = sampleWave(waveType, pg);
+        var yg = midY - vg * ampRange * volume;
+        if (x2 === -glowMargin) liveOffscreenCtx.moveTo(x2, yg);
+        else liveOffscreenCtx.lineTo(x2, yg);
+      }
+      liveOffscreenCtx.stroke();
+
+      liveOffscreenCtx.strokeStyle = colors.wave;
+      liveOffscreenCtx.lineWidth = 1.5;
+      liveOffscreenCtx.beginPath();
+      for (var x3 = 0; x3 < w; x3 += 1) {
+        var p = (x3 * freqScale) + livePhase;
+        var v = sampleWave(waveType, p);
+        var yv = midY - v * ampRange * volume;
+        if (x3 === 0) liveOffscreenCtx.moveTo(x3, yv);
+        else liveOffscreenCtx.lineTo(x3, yv);
+      }
+      liveOffscreenCtx.stroke();
+
+      liveOffscreenCtx.restore();
     }
 
     var volPct = Math.round(volume * 100);
