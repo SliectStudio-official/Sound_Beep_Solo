@@ -512,6 +512,8 @@
     var volBarColor = "rgba(204, 120, 92, 0.35)";
     var volBarBg = "rgba(250, 249, 245, 0.04)";
 
+    var bottomPad = 18;
+
     for (var i = 0; i < sequence.length; i++) {
       var item = sequence[i];
       var startSample = accumulatedSamples;
@@ -528,7 +530,7 @@
         ctx.setLineDash([2, 3]);
         ctx.beginPath();
         ctx.moveTo(startX, 4);
-        ctx.lineTo(startX, h - 4);
+        ctx.lineTo(startX, h - bottomPad);
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -549,7 +551,7 @@
         ctx.fillStyle = markerTextColor;
         ctx.font = "9px 'JetBrains Mono', monospace";
         ctx.textAlign = "left";
-        ctx.fillText(item.duration + "ms", barX, barY + barH + 10);
+        ctx.fillText(item.duration + "ms", barX, h - 4);
       }
 
       accumulatedSamples += toneSamples + gapSamples;
@@ -561,7 +563,7 @@
     ctx.beginPath();
     var finalX = accumulatedSamples * xStep;
     ctx.moveTo(finalX, 4);
-    ctx.lineTo(finalX, h - 4);
+    ctx.lineTo(finalX, h - bottomPad);
     ctx.stroke();
     ctx.setLineDash([]);
   }
