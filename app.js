@@ -156,6 +156,23 @@
     }
   }
 
+  function playTone(ctx, freq, duration, waveType, volume, startTime) {
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = mapWaveToWebAudio(waveType);
+    osc.frequency.setValueAtTime(freq, startTime);
+
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(volume * 0.8, startTime + 0.003);
+    gain.gain.setValueAtTime(volume * 0.8, startTime + duration - 0.003);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.01);
+  }
+
   function playPreview(freq, durationMs, waveType, volume) {
     var ctx = getAudioContext();
     if (!ctx) { setLiveError("音频上下文不可用"); return; }
@@ -163,21 +180,7 @@
     var vol = volume != null ? volume : getVolume();
     var dur = (durationMs || getDuration()) / 1000;
 
-    var osc = ctx.createOscillator();
-    var gain = ctx.createGain();
-    osc.type = mapWaveToWebAudio(waveType || getWave());
-    osc.frequency.setValueAtTime(freq || getFreq(), now);
-
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(vol * 0.8, now + 0.003);
-    gain.gain.setValueAtTime(vol * 0.8, now + dur - 0.003);
-    gain.gain.linearRampToValueAtTime(0, now + dur);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + dur + 0.01);
-
+    playTone(ctx, freq || getFreq(), dur, waveType || getWave(), vol, now);
     startProgress(durationMs || getDuration());
   }
 
@@ -195,20 +198,7 @@
       var dur = item.duration / 1000;
       var vol = (item.volume != null ? item.volume : globalVol);
       if (item.freq > 0) {
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.type = mapWaveToWebAudio(item.wave || "square");
-        osc.frequency.setValueAtTime(item.freq, t);
-
-        gain.gain.setValueAtTime(0, t);
-        gain.gain.linearRampToValueAtTime(vol * 0.8, t + 0.003);
-        gain.gain.setValueAtTime(vol * 0.8, t + dur - 0.003);
-        gain.gain.linearRampToValueAtTime(0, t + dur);
-
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(t);
-        osc.stop(t + dur + 0.01);
+        playTone(ctx, item.freq, dur, item.wave || "square", vol, t);
       }
       t += dur + (item.gap || 0) / 1000;
       totalDur += item.duration + (item.gap || 0);
@@ -369,7 +359,7 @@
     if (sequence.length > 0) {
       summary.innerHTML = "共 " + sequence.length + " 个音调，总时长约 " + totalDur + "ms";
     } else {
-      summary.innerHTML = "";
+      summary.innerHTML = "暂无序列";
     }
   }
 
@@ -948,7 +938,7 @@
   function handleSeqAction(action, idx) {
     switch (action) {
       case "preview":
-        playPreview(sequence[idx].freq, sequence[idx].duration, sequence[idx].wave);
+        playPreview(sequence[idx].freq, sequence[idx].duration, sequence[idx].wave, sequence[idx].volume);
         break;
       case "delete":
         sequence.splice(idx, 1);
