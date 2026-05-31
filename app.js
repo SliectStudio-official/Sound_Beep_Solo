@@ -19,6 +19,11 @@
   var liveFpsCounter = 0;
   var liveFpsDisplay = 0;
   var liveFpsTimer = 0;
+  var livePaused = false;
+  var liveTargetFps = 30;
+  var liveFrameInterval = 1000 / 30;
+  var liveLastFrameTime = 0;
+  var livePausedPhase = 0;
 
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -57,7 +62,17 @@
   var liveWaveCanvas = $("#liveWaveCanvas");
   var liveWaveOverlay = $("#liveWaveOverlay");
   var liveWaveState = $("#liveWaveState");
-  var liveWaveReadout = $("#liveWaveReadout");
+  var liveWaveParams = $("#liveWaveParams");
+  var btnLivePause = $("#btnLivePause");
+  var pauseIcon = $("#pauseIcon");
+  var pauseLabel = $("#pauseLabel");
+  var liveFpsSelect = $("#liveFpsSelect");
+  var lwpFreq = $("#lwpFreq");
+  var lwpWave = $("#lwpWave");
+  var lwpVol = $("#lwpVol");
+  var lwpDur = $("#lwpDur");
+  var lwpGap = $("#lwpGap");
+  var lwpFps = $("#lwpFps");
 
   function getFreq() { return parseInt(freqSlider.value) || 4000; }
   function getDuration() { return parseInt(durSlider.value) || 200; }
@@ -490,7 +505,7 @@
 
   function setLiveReady() {
     liveWaveOverlay.classList.add("hidden");
-    liveWaveReadout.classList.add("visible");
+    liveWaveParams.classList.add("visible");
   }
 
   function initLiveWaveform() {
@@ -516,10 +531,21 @@
   }
 
   function animateLiveWaveform() {
+    if (livePaused) {
+      liveAnimId = requestAnimationFrame(animateLiveWaveform);
+      return;
+    }
+
     try {
       var now = performance.now();
-      var dt = now - liveLastTime;
-      liveLastTime = now;
+      var elapsed = now - liveLastFrameTime;
+
+      if (elapsed < liveFrameInterval) {
+        liveAnimId = requestAnimationFrame(animateLiveWaveform);
+        return;
+      }
+
+      liveLastFrameTime = now - (elapsed % liveFrameInterval);
 
       liveFpsCounter++;
       if (now - liveFpsTimer >= 1000) {
@@ -572,7 +598,7 @@
       highlight: "#faf9f5"
     };
 
-    var margin = { top: 8, right: 8, bottom: 36, left: 8 };
+    var margin = { top: 8, right: 8, bottom: 8, left: 8 };
     var plotW = w - margin.left - margin.right;
     var plotH = h - margin.top - margin.bottom;
     var midY = margin.top + plotH / 2;
@@ -643,25 +669,13 @@
 
     drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors);
 
-    ctx.fillStyle = colors.text;
-    ctx.font = "11px 'JetBrains Mono', monospace";
-    ctx.textAlign = "left";
-    ctx.fillText("f = " + freq + " Hz", margin.left + 2, h - margin.bottom + 14);
-
-    ctx.textAlign = "right";
-    ctx.fillText(mapWaveLabel(waveType), w - margin.right - 2, h - margin.bottom + 14);
-
-    ctx.textAlign = "right";
     var volPct = Math.round(volume * 100);
-    ctx.fillText("vol " + volPct + "%", w - margin.right - 2, h - margin.bottom + 26);
-
-    if (liveWaveReadout) {
-      liveWaveReadout.innerHTML =
-        '<span>' + freq + ' Hz</span>' +
-        ' | ' + liveFpsDisplay + ' fps' +
-        ' | ' + mapWaveLabel(waveType) +
-        ' | vol ' + volPct + '%';
-    }
+    if (lwpFreq) lwpFreq.textContent = freq + " Hz";
+    if (lwpWave) lwpWave.textContent = mapWaveLabel(waveType);
+    if (lwpVol) lwpVol.textContent = volPct + "%";
+    if (lwpDur) lwpDur.textContent = getDuration() + " ms";
+    if (lwpGap) lwpGap.textContent = getGap() + " ms";
+    if (lwpFps) lwpFps.textContent = liveFpsDisplay;
   }
 
   function drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors) {
@@ -891,6 +905,27 @@
     }, 150);
   });
 
+  btnLivePause.addEventListener("click", function () {
+    livePaused = !livePaused;
+    if (livePaused) {
+      livePausedPhase = livePhase;
+      pauseIcon.textContent = "▶";
+      pauseLabel.textContent = "继续";
+      btnLivePause.classList.add("paused");
+    } else {
+      livePhase = livePausedPhase;
+      pauseIcon.textContent = "⏸";
+      pauseLabel.textContent = "暂停";
+      btnLivePause.classList.remove("paused");
+      liveLastFrameTime = performance.now();
+    }
+  });
+
+  liveFpsSelect.addEventListener("change", function () {
+    liveTargetFps = parseInt(liveFpsSelect.value) || 30;
+    liveFrameInterval = 1000 / liveTargetFps;
+  });
+
   window.addEventListener("beforeunload", function () {
     stopLiveWaveform();
   });
@@ -898,7 +933,7 @@
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
       stopLiveWaveform();
-    } else {
+    } else if (!livePaused) {
       startLiveWaveform();
     }
   });

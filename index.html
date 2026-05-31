@@ -87,13 +87,42 @@
         </div>
 
         <div class="live-wave-section">
-          <h3>实时波形</h3>
+          <div class="live-wave-header">
+            <h3>实时波形</h3>
+            <div class="live-wave-controls">
+              <button id="btnLivePause" class="live-ctrl-btn" title="暂停/继续">
+                <span class="pause-icon" id="pauseIcon">⏸</span>
+                <span class="pause-label" id="pauseLabel">暂停</span>
+              </button>
+              <label class="live-fps-control">
+                <span class="live-fps-label">刷新率</span>
+                <select id="liveFpsSelect">
+                  <option value="15">15 fps</option>
+                  <option value="24">24 fps</option>
+                  <option value="30" selected>30 fps</option>
+                  <option value="45">45 fps</option>
+                  <option value="60">60 fps</option>
+                </select>
+              </label>
+            </div>
+          </div>
           <div class="live-wave-container" id="liveWaveContainer">
             <canvas id="liveWaveCanvas"></canvas>
             <div class="live-wave-overlay" id="liveWaveOverlay">
               <span class="live-wave-state" id="liveWaveState">初始化中...</span>
             </div>
-            <div class="live-wave-readout" id="liveWaveReadout"></div>
+            <div class="live-wave-params" id="liveWaveParams">
+              <div class="param-row-top">
+                <span class="lwp-item"><span class="lwp-key">频率</span><span class="lwp-val" id="lwpFreq">4000 Hz</span></span>
+                <span class="lwp-item"><span class="lwp-key">波形</span><span class="lwp-val" id="lwpWave">方波</span></span>
+                <span class="lwp-item"><span class="lwp-key">音量</span><span class="lwp-val" id="lwpVol">80%</span></span>
+              </div>
+              <div class="param-row-bottom">
+                <span class="lwp-item"><span class="lwp-key">时长</span><span class="lwp-val" id="lwpDur">200 ms</span></span>
+                <span class="lwp-item"><span class="lwp-key">间隔</span><span class="lwp-val" id="lwpGap">50 ms</span></span>
+                <span class="lwp-item"><span class="lwp-key">FPS</span><span class="lwp-val" id="lwpFps">30</span></span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
