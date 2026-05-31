@@ -24,9 +24,9 @@
   var liveLastFrameTime = 0;
   var livePausedPhase = 0;
   var liveSmooth = false;
-  var liveSmoothAlpha = 0.2;
-  var liveOffscreen = null;
-  var liveOffscreenCtx = null;
+  var liveEcgBuffer = null;
+  var liveEcgBufferSize = 0;
+  var liveEcgPhase = 0;
 
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -670,15 +670,6 @@
     var pw = Math.round(w * dpr);
     var ph = Math.round(h * dpr);
 
-    if (liveSmooth) {
-      if (!liveOffscreen || liveOffscreen.width !== pw || liveOffscreen.height !== ph) {
-        liveOffscreen = document.createElement("canvas");
-        liveOffscreen.width = pw;
-        liveOffscreen.height = ph;
-        liveOffscreenCtx = liveOffscreen.getContext("2d");
-      }
-    }
-
     canvas.width = pw;
     canvas.height = ph;
     canvas.style.width = w + "px";
@@ -733,91 +724,96 @@
     ctx.stroke();
     ctx.setLineDash([]);
 
-    if (liveSmooth && liveOffscreen) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(margin.left, margin.top, plotW, plotH);
-      ctx.clip();
-      ctx.globalAlpha = liveSmoothAlpha;
-      ctx.drawImage(liveOffscreen, 0, 0, pw, ph, 0, 0, w, h);
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
-
     ctx.save();
     ctx.beginPath();
     ctx.rect(margin.left, margin.top, plotW, plotH);
     ctx.clip();
 
-    var cycleSpan = plotW;
-    var totalCycles = 3;
-    var freqScale = totalCycles / cycleSpan;
-    var scrollSpeed = (freq / 8000) * 800;
-    livePhase += scrollSpeed * (dt / 1000);
+    if (liveSmooth) {
+      if (!liveEcgBuffer || liveEcgBufferSize !== Math.round(plotW)) {
+        liveEcgBufferSize = Math.round(plotW);
+        liveEcgBuffer = new Float32Array(liveEcgBufferSize);
+        liveEcgPhase = 0;
+      }
+      var scrollPixels = Math.max(1, Math.round((freq / 8000) * 200 * (dt / 1000)));
+      if (scrollPixels >= liveEcgBufferSize) scrollPixels = liveEcgBufferSize - 1;
+      if (scrollPixels > 0) {
+        liveEcgBuffer.copyWithin(scrollPixels, 0, liveEcgBufferSize - scrollPixels);
+      }
+      liveEcgPhase += (freq / 8000) * 800 * (dt / 1000);
+      for (var i = 0; i < scrollPixels; i++) {
+        var xRatio = i / scrollPixels;
+        var ph = liveEcgPhase - (scrollPixels - i) * (3 / plotW);
+        liveEcgBuffer[i] = sampleWave(waveType, ph) * volume;
+      }
 
-    var glowMargin = 4;
-    ctx.strokeStyle = colors.waveGlow;
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    for (var x = -glowMargin; x < w + glowMargin; x += 1) {
-      var phaseGlow = (x * freqScale) + livePhase;
-      var valGlow = sampleWave(waveType, phaseGlow);
-      var yGlow = midY - valGlow * ampRange * volume;
-      if (x === -glowMargin) ctx.moveTo(x, yGlow);
-      else ctx.lineTo(x, yGlow);
-    }
-    ctx.stroke();
+      var glowMargin = 4;
+      ctx.strokeStyle = colors.waveGlow;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      for (var xi = 0; xi < liveEcgBufferSize; xi++) {
+        var yGlow = midY - liveEcgBuffer[xi] * ampRange;
+        if (xi === 0) ctx.moveTo(margin.left + xi, yGlow);
+        else ctx.lineTo(margin.left + xi, yGlow);
+      }
+      ctx.stroke();
 
-    ctx.strokeStyle = colors.wave;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (var x = 0; x < w; x += 1) {
-      var phase = (x * freqScale) + livePhase;
-      var val = sampleWave(waveType, phase);
-      var y = midY - val * ampRange * volume;
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      ctx.strokeStyle = colors.wave;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (var xi2 = 0; xi2 < liveEcgBufferSize; xi2++) {
+        var yVal = midY - liveEcgBuffer[xi2] * ampRange;
+        if (xi2 === 0) ctx.moveTo(margin.left + xi2, yVal);
+        else ctx.lineTo(margin.left + xi2, yVal);
+      }
+      ctx.stroke();
+
+      var cursorX = margin.left;
+      var cursorY = midY - liveEcgBuffer[0] * ampRange;
+      ctx.beginPath();
+      ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
+      ctx.fillStyle = colors.wave;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cursorX, cursorY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
+      ctx.fill();
+    } else {
+      var cycleSpan = plotW;
+      var totalCycles = 3;
+      var freqScale = totalCycles / cycleSpan;
+      var scrollSpeed = (freq / 8000) * 800;
+      livePhase += scrollSpeed * (dt / 1000);
+
+      var glowMargin = 4;
+      ctx.strokeStyle = colors.waveGlow;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      for (var x = -glowMargin; x < w + glowMargin; x += 1) {
+        var phaseGlow = (x * freqScale) + livePhase;
+        var valGlow = sampleWave(waveType, phaseGlow);
+        var yGlow = midY - valGlow * ampRange * volume;
+        if (x === -glowMargin) ctx.moveTo(x, yGlow);
+        else ctx.lineTo(x, yGlow);
+      }
+      ctx.stroke();
+
+      ctx.strokeStyle = colors.wave;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (var x = 0; x < w; x += 1) {
+        var phase = (x * freqScale) + livePhase;
+        var val = sampleWave(waveType, phase);
+        var y = midY - val * ampRange * volume;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
 
     ctx.restore();
 
     drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors);
-
-    if (liveSmooth && liveOffscreen && liveOffscreenCtx) {
-      liveOffscreenCtx.clearRect(0, 0, pw, ph);
-      liveOffscreenCtx.save();
-      liveOffscreenCtx.scale(dpr, dpr);
-      liveOffscreenCtx.beginPath();
-      liveOffscreenCtx.rect(margin.left, margin.top, plotW, plotH);
-      liveOffscreenCtx.clip();
-
-      liveOffscreenCtx.strokeStyle = colors.waveGlow;
-      liveOffscreenCtx.lineWidth = 5;
-      liveOffscreenCtx.beginPath();
-      for (var x2 = -glowMargin; x2 < w + glowMargin; x2 += 1) {
-        var pg = (x2 * freqScale) + livePhase;
-        var vg = sampleWave(waveType, pg);
-        var yg = midY - vg * ampRange * volume;
-        if (x2 === -glowMargin) liveOffscreenCtx.moveTo(x2, yg);
-        else liveOffscreenCtx.lineTo(x2, yg);
-      }
-      liveOffscreenCtx.stroke();
-
-      liveOffscreenCtx.strokeStyle = colors.wave;
-      liveOffscreenCtx.lineWidth = 1.5;
-      liveOffscreenCtx.beginPath();
-      for (var x3 = 0; x3 < w; x3 += 1) {
-        var p = (x3 * freqScale) + livePhase;
-        var v = sampleWave(waveType, p);
-        var yv = midY - v * ampRange * volume;
-        if (x3 === 0) liveOffscreenCtx.moveTo(x3, yv);
-        else liveOffscreenCtx.lineTo(x3, yv);
-      }
-      liveOffscreenCtx.stroke();
-
-      liveOffscreenCtx.restore();
-    }
 
     var volPct = Math.round(volume * 100);
     if (lwpFreq) lwpFreq.textContent = freq + " Hz";
@@ -1061,21 +1057,20 @@
     if (liveSmooth) {
       btnLiveSmooth.classList.add("smooth-active");
       smoothLabel.textContent = "平滑开";
-      liveOffscreen = null;
-      liveOffscreenCtx = null;
+      liveEcgBuffer = null;
+      liveEcgPhase = 0;
     } else {
       btnLiveSmooth.classList.remove("smooth-active");
       smoothLabel.textContent = "平滑";
-      liveOffscreen = null;
-      liveOffscreenCtx = null;
+      liveEcgBuffer = null;
+      liveEcgPhase = 0;
     }
   });
 
   $("#btnLiveRefresh").addEventListener("click", function () {
     try {
-      if (liveSmooth && liveOffscreen && liveOffscreenCtx) {
-        liveOffscreenCtx.clearRect(0, 0, liveOffscreen.width, liveOffscreen.height);
-      }
+      liveEcgBuffer = null;
+      liveEcgPhase = 0;
       drawLiveFrame(liveFrameInterval);
     } catch (e) {
       setLiveError("手动刷新失败");
