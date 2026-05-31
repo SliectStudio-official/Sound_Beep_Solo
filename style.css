@@ -558,6 +558,21 @@ button:disabled {
   line-height: 1;
 }
 
+.smooth-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.smooth-label {
+  font-size: 12px;
+}
+
+.live-ctrl-btn.smooth-active {
+  border-color: var(--accent-teal);
+  color: var(--accent-teal);
+  background: rgba(93, 184, 166, 0.08);
+}
+
 .live-fps-control {
   display: inline-flex;
   align-items: center;

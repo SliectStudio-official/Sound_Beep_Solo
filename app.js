@@ -22,6 +22,10 @@
   var liveFrameInterval = 1000 / 120;
   var liveLastFrameTime = 0;
   var livePausedPhase = 0;
+  var liveSmooth = false;
+  var liveSmoothAlpha = 0.2;
+  var liveOffscreen = null;
+  var liveOffscreenCtx = null;
 
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -71,6 +75,8 @@
   var lwpDur = $("#lwpDur");
   var lwpGap = $("#lwpGap");
   var lwpFps = $("#lwpFps");
+  var btnLiveSmooth = $("#btnLiveSmooth");
+  var smoothLabel = $("#smoothLabel");
 
   function getFreq() { return parseInt(freqSlider.value) || 4000; }
   function getDuration() { return parseInt(durSlider.value) || 200; }
@@ -651,8 +657,20 @@
 
     if (w <= 0 || h <= 0) return;
 
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+    var pw = Math.round(w * dpr);
+    var ph = Math.round(h * dpr);
+
+    if (liveSmooth) {
+      if (!liveOffscreen || liveOffscreen.width !== pw || liveOffscreen.height !== ph) {
+        liveOffscreen = document.createElement("canvas");
+        liveOffscreen.width = pw;
+        liveOffscreen.height = ph;
+        liveOffscreenCtx = liveOffscreen.getContext("2d");
+      }
+    }
+
+    canvas.width = pw;
+    canvas.height = ph;
     canvas.style.width = w + "px";
     canvas.style.height = h + "px";
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -679,8 +697,17 @@
     var plotH = h - margin.top - margin.bottom;
     var midY = margin.top + plotH / 2;
 
-    ctx.fillStyle = colors.bg;
-    ctx.fillRect(0, 0, w, h);
+    if (liveSmooth && liveOffscreen) {
+      ctx.fillStyle = colors.bg;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.globalAlpha = 1 - liveSmoothAlpha;
+      ctx.drawImage(liveOffscreen, 0, 0, pw, ph, 0, 0, w, h);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = colors.bg;
+      ctx.fillRect(0, 0, w, h);
+    }
 
     ctx.strokeStyle = colors.gridMajor;
     ctx.lineWidth = 1;
@@ -744,6 +771,11 @@
     ctx.restore();
 
     drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors);
+
+    if (liveSmooth && liveOffscreen && liveOffscreenCtx) {
+      liveOffscreenCtx.clearRect(0, 0, pw, ph);
+      liveOffscreenCtx.drawImage(canvas, 0, 0);
+    }
 
     var volPct = Math.round(volume * 100);
     if (lwpFreq) lwpFreq.textContent = freq + " Hz";
@@ -984,6 +1016,21 @@
     resizeTimeout = setTimeout(function () {
       if (currentWaveformData) { drawWaveform(currentWaveformData); }
     }, 150);
+  });
+
+  btnLiveSmooth.addEventListener("click", function () {
+    liveSmooth = !liveSmooth;
+    if (liveSmooth) {
+      btnLiveSmooth.classList.add("smooth-active");
+      smoothLabel.textContent = "平滑开";
+      liveOffscreen = null;
+      liveOffscreenCtx = null;
+    } else {
+      btnLiveSmooth.classList.remove("smooth-active");
+      smoothLabel.textContent = "平滑";
+      liveOffscreen = null;
+      liveOffscreenCtx = null;
+    }
   });
 
   $("#btnLiveRefresh").addEventListener("click", function () {
