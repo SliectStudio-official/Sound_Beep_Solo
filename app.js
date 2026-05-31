@@ -715,8 +715,8 @@
     ctx.lineWidth = 0.5;
     ctx.setLineDash([2, 6]);
     var baseAmpRange = plotH * 0.44;
-    var ampRange = volume > 0 ? baseAmpRange / Math.max(volume, 0.01) : baseAmpRange;
-    if (ampRange > baseAmpRange * 4) ampRange = baseAmpRange * 4;
+    var minWaveRatio = 0.075;
+    var ampRange = baseAmpRange / Math.max(volume, minWaveRatio);
     ctx.beginPath();
     ctx.moveTo(margin.left, midY - baseAmpRange);
     ctx.lineTo(w - margin.right, midY - baseAmpRange);
