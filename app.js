@@ -6,6 +6,7 @@
   var RELEASE_MS = 3;
 
   var audioCtx = null;
+  var activeOscillators = [];
   var sequence = [];
   var currentWaveformData = null;
   var progressAnimId = null;
@@ -156,6 +157,17 @@
     }
   }
 
+  function stopAllAudio() {
+    for (var i = 0; i < activeOscillators.length; i++) {
+      try {
+        activeOscillators[i].stop();
+        activeOscillators[i].disconnect();
+      } catch (e) { }
+    }
+    activeOscillators = [];
+    stopProgress();
+  }
+
   function playTone(ctx, freq, duration, waveType, volume, startTime) {
     var osc = ctx.createOscillator();
     var gain = ctx.createGain();
@@ -171,9 +183,16 @@
     gain.connect(ctx.destination);
     osc.start(startTime);
     osc.stop(startTime + duration + 0.01);
+
+    activeOscillators.push(osc);
+    osc.onended = function () {
+      var idx = activeOscillators.indexOf(osc);
+      if (idx !== -1) activeOscillators.splice(idx, 1);
+    };
   }
 
   function playPreview(freq, durationMs, waveType, volume) {
+    stopAllAudio();
     var ctx = getAudioContext();
     if (!ctx) { setLiveError("音频上下文不可用"); return; }
     var now = ctx.currentTime;
@@ -186,6 +205,7 @@
 
   function playSequence() {
     if (sequence.length === 0) return;
+    stopAllAudio();
     var ctx = getAudioContext();
     if (!ctx) { setLiveError("音频上下文不可用"); return; }
     var now = ctx.currentTime;
@@ -975,11 +995,7 @@
   });
 
   $("#btnStopAll").addEventListener("click", function () {
-    if (audioCtx && audioCtx.state === "suspended") { audioCtx.resume(); }
-    if (audioCtx && audioCtx.state === "running") {
-      audioCtx.suspend();
-    }
-    stopProgress();
+    stopAllAudio();
   });
 
   $("#btnClearSequence").addEventListener("click", function () {
