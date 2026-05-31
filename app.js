@@ -27,6 +27,7 @@
   var liveEcgBuffer = null;
   var liveEcgBufferSize = 0;
   var liveEcgPhase = 0;
+  var liveEcgSubPixel = 0;
 
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -734,17 +735,19 @@
         liveEcgBufferSize = Math.round(plotW);
         liveEcgBuffer = new Float32Array(liveEcgBufferSize);
         liveEcgPhase = 0;
+        liveEcgSubPixel = 0;
       }
-      var scrollPixels = Math.max(1, Math.round((freq / 8000) * 200 * (dt / 1000)));
+      var freqScale = 3 / plotW;
+      liveEcgSubPixel += (freq / 8000) * 200 * (dt / 1000);
+      var scrollPixels = Math.floor(liveEcgSubPixel);
+      liveEcgSubPixel -= scrollPixels;
       if (scrollPixels >= liveEcgBufferSize) scrollPixels = liveEcgBufferSize - 1;
       if (scrollPixels > 0) {
         liveEcgBuffer.copyWithin(scrollPixels, 0, liveEcgBufferSize - scrollPixels);
+        liveEcgPhase += scrollPixels * freqScale;
       }
-      liveEcgPhase += (freq / 8000) * 800 * (dt / 1000);
       for (var i = 0; i < scrollPixels; i++) {
-        var xRatio = i / scrollPixels;
-        var ph = liveEcgPhase - (scrollPixels - i) * (3 / plotW);
-        liveEcgBuffer[i] = sampleWave(waveType, ph) * volume;
+        liveEcgBuffer[i] = sampleWave(waveType, liveEcgPhase - i * freqScale) * volume;
       }
 
       var glowMargin = 4;
@@ -1059,11 +1062,13 @@
       smoothLabel.textContent = "平滑开";
       liveEcgBuffer = null;
       liveEcgPhase = 0;
+      liveEcgSubPixel = 0;
     } else {
       btnLiveSmooth.classList.remove("smooth-active");
       smoothLabel.textContent = "平滑";
       liveEcgBuffer = null;
       liveEcgPhase = 0;
+      liveEcgSubPixel = 0;
     }
   });
 
@@ -1071,6 +1076,7 @@
     try {
       liveEcgBuffer = null;
       liveEcgPhase = 0;
+      liveEcgSubPixel = 0;
       drawLiveFrame(liveFrameInterval);
     } catch (e) {
       setLiveError("手动刷新失败");
