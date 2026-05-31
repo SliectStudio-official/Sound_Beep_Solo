@@ -1067,6 +1067,9 @@
 
   $("#btnLiveRefresh").addEventListener("click", function () {
     try {
+      if (liveSmooth && liveOffscreen && liveOffscreenCtx) {
+        liveOffscreenCtx.clearRect(0, 0, liveOffscreen.width, liveOffscreen.height);
+      }
       drawLiveFrame(liveFrameInterval);
     } catch (e) {
       setLiveError("手动刷新失败");
