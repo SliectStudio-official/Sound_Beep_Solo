@@ -716,9 +716,7 @@
     var plotH = h - margin.top - margin.bottom;
     var midY = margin.top + plotH / 2;
 
-    var autoScaleMin = 0.6;
-    var effectiveVolume = volume;
-    var displayScale = 1 / Math.max(volume, autoScaleMin);
+    var ampRange = plotH * 0.44;
 
     ctx.fillStyle = colors.bg;
     ctx.fillRect(0, 0, w, h);
@@ -732,35 +730,25 @@
     ctx.stroke();
     ctx.setLineDash([]);
 
-    var ampRange = plotH * 0.44;
-    var scaledAmpRange = ampRange * displayScale;
     ctx.strokeStyle = colors.grid;
     ctx.lineWidth = 0.5;
     ctx.setLineDash([2, 6]);
     ctx.beginPath();
-    ctx.moveTo(margin.left, midY - scaledAmpRange);
-    ctx.lineTo(w - margin.right, midY - scaledAmpRange);
+    ctx.moveTo(margin.left, midY - ampRange);
+    ctx.lineTo(w - margin.right, midY - ampRange);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(margin.left, midY + scaledAmpRange);
-    ctx.lineTo(w - margin.right, midY + scaledAmpRange);
+    ctx.moveTo(margin.left, midY + ampRange);
+    ctx.lineTo(w - margin.right, midY + ampRange);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    ctx.fillStyle = colors.text;
-    ctx.font = "9px monospace";
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
     var volPctForScale = Math.round(volume * 100);
-    ctx.fillText(volPctForScale + "%", margin.left - 4, midY);
-    ctx.fillText("0%", margin.left - 4, midY - scaledAmpRange);
-    ctx.fillText("0%", margin.left - 4, midY + scaledAmpRange);
-
+    var actualAmpPx = ampRange * volume;
     if (volume < 1) {
-      ctx.strokeStyle = "rgba(250, 249, 245, 0.04)";
+      ctx.strokeStyle = "rgba(204, 120, 92, 0.2)";
       ctx.lineWidth = 0.5;
-      ctx.setLineDash([1, 4]);
-      var actualAmpPx = ampRange * volume * displayScale;
+      ctx.setLineDash([2, 4]);
       ctx.beginPath();
       ctx.moveTo(margin.left, midY - actualAmpPx);
       ctx.lineTo(w - margin.right, midY - actualAmpPx);
@@ -770,13 +758,15 @@
       ctx.lineTo(w - margin.right, midY + actualAmpPx);
       ctx.stroke();
       ctx.setLineDash([]);
-
-      ctx.fillStyle = "rgba(204, 120, 92, 0.5)";
-      ctx.font = "8px monospace";
-      ctx.textAlign = "right";
-      ctx.fillText(volPctForScale + "%", margin.left - 4, midY - actualAmpPx);
-      ctx.fillText(volPctForScale + "%", margin.left - 4, midY + actualAmpPx);
     }
+
+    ctx.fillStyle = colors.text;
+    ctx.font = "9px monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(volPctForScale + "%", margin.left - 4, midY - actualAmpPx);
+    ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + actualAmpPx);
+    ctx.fillText("0%", margin.left - 4, midY);
 
     var volBarH = plotH * 0.5;
     var volBarW = 3;
@@ -814,7 +804,7 @@
       for (var i = 0; i < scrollPixels; i++) {
         var pixelTime = liveTimeAccum - (scrollPixels - i) * (dt / scrollPixels);
         var env = burstEnvelope(pixelTime, durationMs, gapMs);
-        liveEcgBuffer[i] = sampleWave(waveType, liveEcgPhase - i * freqScale) * volume * env;
+        liveEcgBuffer[i] = sampleWave(waveType, liveEcgPhase - i * freqScale) * env;
       }
 
       var glowMargin = 4;
@@ -822,7 +812,7 @@
       ctx.lineWidth = 5;
       ctx.beginPath();
       for (var xi = 0; xi < liveEcgBufferSize; xi++) {
-        var yGlow = midY - liveEcgBuffer[xi] * scaledAmpRange;
+        var yGlow = midY - liveEcgBuffer[xi] * ampRange * volume;
         if (xi === 0) ctx.moveTo(margin.left + xi, yGlow);
         else ctx.lineTo(margin.left + xi, yGlow);
       }
@@ -832,14 +822,14 @@
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       for (var xi2 = 0; xi2 < liveEcgBufferSize; xi2++) {
-        var yVal = midY - liveEcgBuffer[xi2] * scaledAmpRange;
+        var yVal = midY - liveEcgBuffer[xi2] * ampRange * volume;
         if (xi2 === 0) ctx.moveTo(margin.left + xi2, yVal);
         else ctx.lineTo(margin.left + xi2, yVal);
       }
       ctx.stroke();
 
       var cursorX = margin.left;
-      var cursorY = midY - liveEcgBuffer[0] * scaledAmpRange;
+      var cursorY = midY - liveEcgBuffer[0] * ampRange * volume;
       ctx.beginPath();
       ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
       ctx.fillStyle = colors.wave;
@@ -849,15 +839,17 @@
       ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
       ctx.fill();
     } else {
+      var periodMs = durationMs + gapMs;
+      var periodPhase = (freq / 1000) * (periodMs / 1000);
+      var durationPhase = (freq / 1000) * (durationMs / 1000);
+      var phaseInPeriod = livePhase % periodPhase;
+      var env = (phaseInPeriod < durationPhase) ? 1 : 0;
+
       var cycleSpan = plotW;
       var totalCycles = 3;
       var freqScale = totalCycles / cycleSpan;
       var scrollSpeed = (freq / 8000) * 800;
       livePhase += scrollSpeed * (dt / 1000);
-
-      var periodMs = durationMs + gapMs;
-      var pixelsPerMs = plotW / (periodMs * 3 || 300);
-      var viewTimeStart = liveTimeAccum - (plotW / pixelsPerMs);
 
       var glowMargin = 4;
       ctx.strokeStyle = colors.waveGlow;
@@ -866,9 +858,9 @@
       for (var x = -glowMargin; x < w + glowMargin; x += 1) {
         var phaseGlow = (x * freqScale) + livePhase;
         var valGlow = sampleWave(waveType, phaseGlow);
-        var pixelTimeGlow = viewTimeStart + (x / pixelsPerMs);
-        var envGlow = burstEnvelope(pixelTimeGlow, durationMs, gapMs);
-        var yGlow = midY - valGlow * scaledAmpRange * volume * envGlow;
+        var pipGlow = phaseGlow % periodPhase;
+        var envGlow = (pipGlow < durationPhase) ? 1 : 0;
+        var yGlow = midY - valGlow * ampRange * volume * envGlow;
         if (x === -glowMargin) ctx.moveTo(x, yGlow);
         else ctx.lineTo(x, yGlow);
       }
@@ -880,9 +872,9 @@
       for (var x = 0; x < w; x += 1) {
         var phase = (x * freqScale) + livePhase;
         var val = sampleWave(waveType, phase);
-        var pixelTime = viewTimeStart + (x / pixelsPerMs);
-        var env = burstEnvelope(pixelTime, durationMs, gapMs);
-        var y = midY - val * scaledAmpRange * volume * env;
+        var pip = phase % periodPhase;
+        var envN = (pip < durationPhase) ? 1 : 0;
+        var y = midY - val * ampRange * volume * envN;
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
