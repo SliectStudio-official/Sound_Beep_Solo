@@ -752,15 +752,28 @@
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
 
-    var labelAmpPx = Math.min(ampRange * volume, baseAmpRange);
-    ctx.fillText(volPctForScale + "%", margin.left - 4, midY - labelAmpPx);
-    ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + labelAmpPx);
+    var curAmpPx = ampRange * volume;
+    var refAmpPx = baseAmpRange;
+    var labelOffset = 14;
+
+    if (volume < 1 && Math.abs(curAmpPx - refAmpPx) < labelOffset) {
+      ctx.fillText(volPctForScale + "%", margin.left - 4, midY - curAmpPx - labelOffset);
+      ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + curAmpPx + labelOffset);
+    } else {
+      ctx.fillText(volPctForScale + "%", margin.left - 4, midY - curAmpPx);
+      ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + curAmpPx);
+    }
     ctx.fillText("0%", margin.left - 4, midY);
 
     if (volume < 1) {
       ctx.fillStyle = "rgba(250, 249, 245, 0.35)";
-      ctx.fillText("100%", margin.left - 4, midY - baseAmpRange);
-      ctx.fillText("-100%", margin.left - 4, midY + baseAmpRange);
+      if (Math.abs(curAmpPx - refAmpPx) < labelOffset) {
+        ctx.fillText("100%", margin.left - 4, midY - refAmpRange + labelOffset);
+        ctx.fillText("-100%", margin.left - 4, midY + refAmpRange - labelOffset);
+      } else {
+        ctx.fillText("100%", margin.left - 4, midY - refAmpRange);
+        ctx.fillText("-100%", margin.left - 4, midY + refAmpRange);
+      }
     }
 
     ctx.textAlign = "left";
