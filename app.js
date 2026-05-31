@@ -481,13 +481,15 @@
 
     if (data.length < 2) return;
 
-    ctx.strokeStyle = "#cc785c";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-
     var xStep = w / (data.length - 1);
     var midY = h / 2;
     var amp = h * 0.42;
+
+    drawWaveformMarkers(ctx, w, h, midY, data.length, xStep);
+
+    ctx.strokeStyle = "#cc785c";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
 
     for (var i = 0; i < data.length; i++) {
       var x = i * xStep;
@@ -495,6 +497,73 @@
       if (i === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
     }
     ctx.stroke();
+  }
+
+  function drawWaveformMarkers(ctx, w, h, midY, dataLen, xStep) {
+    if (sequence.length === 0) return;
+
+    var totalDur = sequence.reduce(function (s, e) { return s + e.duration + (e.gap || 0); }, 0);
+    if (totalDur <= 0) return;
+
+    var sampleDurMs = totalDur / dataLen;
+    var accumulatedSamples = 0;
+    var markerColor = "rgba(250, 249, 245, 0.12)";
+    var markerTextColor = "rgba(250, 249, 245, 0.35)";
+    var volBarColor = "rgba(204, 120, 92, 0.35)";
+    var volBarBg = "rgba(250, 249, 245, 0.04)";
+
+    for (var i = 0; i < sequence.length; i++) {
+      var item = sequence[i];
+      var startSample = accumulatedSamples;
+      var toneSamples = Math.round(item.duration / sampleDurMs);
+      var gapSamples = Math.round((item.gap || 0) / sampleDurMs);
+      var endSample = startSample + toneSamples;
+
+      var startX = startSample * xStep;
+      var endX = endSample * xStep;
+
+      if (i > 0) {
+        ctx.strokeStyle = markerColor;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.moveTo(startX, 4);
+        ctx.lineTo(startX, h - 4);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      if (item.freq > 0 && toneSamples > 0) {
+        var barW = Math.max(3, Math.min(8, (endX - startX) * 0.15));
+        var barH = 16;
+        var barX = startX + 3;
+        var barY = 4;
+
+        ctx.fillStyle = volBarBg;
+        ctx.fillRect(barX, barY, barW, barH);
+
+        var volRatio = item.freq / 8000;
+        ctx.fillStyle = volBarColor;
+        ctx.fillRect(barX, barY + barH * (1 - volRatio), barW, barH * volRatio);
+
+        ctx.fillStyle = markerTextColor;
+        ctx.font = "9px 'JetBrains Mono', monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(item.duration + "ms", barX, barY + barH + 10);
+      }
+
+      accumulatedSamples += toneSamples + gapSamples;
+    }
+
+    ctx.strokeStyle = markerColor;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    var finalX = accumulatedSamples * xStep;
+    ctx.moveTo(finalX, 4);
+    ctx.lineTo(finalX, h - 4);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   function setLiveError(msg) {
