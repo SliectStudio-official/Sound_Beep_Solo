@@ -14,14 +14,12 @@
 
   var liveAnimId = null;
   var livePhase = 0;
-  var liveReady = false;
-  var liveLastTime = 0;
   var liveFpsCounter = 0;
   var liveFpsDisplay = 0;
   var liveFpsTimer = 0;
   var livePaused = false;
-  var liveTargetFps = 30;
-  var liveFrameInterval = 1000 / 30;
+  var liveTargetFps = 120;
+  var liveFrameInterval = 1000 / 120;
   var liveLastFrameTime = 0;
   var livePausedPhase = 0;
 
@@ -182,13 +180,14 @@
     var ctx = getAudioContext();
     if (!ctx) { setLiveError("音频上下文不可用"); return; }
     var now = ctx.currentTime;
-    var vol = getVolume();
+    var globalVol = getVolume();
     var t = now;
     var totalDur = 0;
 
     for (var i = 0; i < sequence.length; i++) {
       var item = sequence[i];
       var dur = item.duration / 1000;
+      var vol = (item.volume != null ? item.volume : globalVol);
       if (item.freq > 0) {
         var osc = ctx.createOscillator();
         var gain = ctx.createGain();
@@ -252,10 +251,12 @@
 
   function generatePatternSamples(pattern, volume) {
     var parts = [];
+    var globalVol = volume;
     for (var i = 0; i < pattern.length; i++) {
       var item = pattern[i];
+      var vol = (item.volume != null ? item.volume : globalVol);
       if (item.freq > 0) {
-        parts.push(generateSamples(item.freq, item.duration, item.wave || "square", volume));
+        parts.push(generateSamples(item.freq, item.duration, item.wave || "square", vol));
       }
       if ((item.gap || 0) > 0) {
         parts.push(generateSilence(item.gap));
@@ -367,7 +368,7 @@
   }
 
   function addToSequence() {
-    sequence.push({ freq: getFreq(), duration: getDuration(), gap: getGap(), wave: getWave() });
+    sequence.push({ freq: getFreq(), duration: getDuration(), gap: getGap(), wave: getWave(), volume: getVolume() });
     renderSequenceTable();
     drawSequenceWaveform();
   }
@@ -410,6 +411,10 @@
   }
 
   function drawLocalWaveform() {
+    if (sequence.length > 0) {
+      drawSequenceWaveform();
+      return;
+    }
     currentWaveformData = generateLocalWaveform(getFreq(), getDuration(), getWave(), getVolume());
     drawWaveform(currentWaveformData);
   }
@@ -544,7 +549,7 @@
         ctx.fillStyle = volBarBg;
         ctx.fillRect(barX, barY, barW, barH);
 
-        var volRatio = item.freq / 8000;
+        var volRatio = (item.volume != null ? item.volume : getVolume());
         ctx.fillStyle = volBarColor;
         ctx.fillRect(barX, barY + barH * (1 - volRatio), barW, barH * volRatio);
 
@@ -594,10 +599,10 @@
 
   function startLiveWaveform() {
     if (liveAnimId) return;
-    liveLastTime = performance.now();
-    liveFpsTimer = liveLastTime;
+    liveFpsTimer = performance.now();
     liveFpsCounter = 0;
-    liveFpsDisplay = 60;
+    liveFpsDisplay = liveTargetFps;
+    liveLastFrameTime = performance.now();
     animateLiveWaveform();
   }
 
@@ -625,7 +630,7 @@
         liveFpsTimer = now;
       }
 
-      drawLiveFrame();
+      drawLiveFrame(elapsed);
     } catch (e) {
       setLiveError("波形渲染错误");
       stopLiveWaveform();
@@ -635,7 +640,7 @@
     liveAnimId = requestAnimationFrame(animateLiveWaveform);
   }
 
-  function drawLiveFrame() {
+  function drawLiveFrame(dt) {
     var canvas = liveWaveCanvas;
     if (!canvas) return;
     var ctx = canvas.getContext("2d");
@@ -709,7 +714,7 @@
     var totalCycles = 3;
     var freqScale = totalCycles / cycleSpan;
     var scrollSpeed = (freq / 8000) * 800;
-    livePhase += scrollSpeed * (1 / 60);
+    livePhase += scrollSpeed * (dt / 1000);
 
     var glowMargin = 4;
     ctx.strokeStyle = colors.waveGlow;
@@ -863,6 +868,7 @@
             duration: item.duration || 200,
             gap: item.gap || 0,
             wave: item.wave || "square",
+            volume: item.volume != null ? item.volume : null,
           };
         });
         renderSequenceTable();
@@ -915,7 +921,10 @@
   });
 
   $("#btnStopAll").addEventListener("click", function () {
-    if (audioCtx && audioCtx.state !== "closed") { audioCtx.close(); audioCtx = null; }
+    if (audioCtx && audioCtx.state === "suspended") { audioCtx.resume(); }
+    if (audioCtx && audioCtx.state === "running") {
+      audioCtx.suspend();
+    }
     stopProgress();
   });
 
@@ -966,6 +975,7 @@
 
   [freqSlider, durSlider, gapSlider, volSlider, waveSelect].forEach(function (el) {
     el.addEventListener("change", drawLocalWaveform);
+    el.addEventListener("input", drawLocalWaveform);
   });
 
   var resizeTimeout;
@@ -978,7 +988,7 @@
 
   $("#btnLiveRefresh").addEventListener("click", function () {
     try {
-      drawLiveFrame();
+      drawLiveFrame(liveFrameInterval);
     } catch (e) {
       setLiveError("手动刷新失败");
     }
