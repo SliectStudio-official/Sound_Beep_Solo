@@ -598,7 +598,7 @@
       highlight: "#faf9f5"
     };
 
-    var margin = { top: 8, right: 8, bottom: 8, left: 8 };
+    var margin = { top: 8, right: 8, bottom: 44, left: 8 };
     var plotW = w - margin.left - margin.right;
     var plotH = h - margin.top - margin.bottom;
     var midY = margin.top + plotH / 2;
