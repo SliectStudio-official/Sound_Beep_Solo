@@ -3,135 +3,149 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>电子提示音生成器</title>
+  <title>一种基于原生 Web 技术的电子提示音生成器</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main class="app">
+  <main class="app-layout">
 
-    <header class="section header">
-      <pre class="ascii-logo">
+    <div class="panel panel-left" id="panelLeft">
+
+      <header class="panel-header">
+        <pre class="ascii-logo">
   ___                    _   ___
  / __| ___ _ _  __ _  __| | | _ ) ___ ___ _ __
  \__ \/ _ \ ' \/ _` |/ _` | | _ \/ -_) -_) '_ \
  |___/\___/_||_\__,_|\__,_| |___/\___\___| .__/
                                           |_|
 </pre>
-      <p class="subtitle">电子提示音可视化生成器</p>
-      <p class="subtitle">频率 / 波形 / 序列 / 导出 — 实时调节，即时预览</p>
-    </header>
+        <p class="subtitle">电子提示音可视化生成器</p>
+        <p class="subtitle-desc">频率 / 波形 / 序列 / 导出 — 实时调节，即时预览</p>
+      </header>
 
-    <div class="section presets-section">
-      <h2>预设</h2>
-      <hr>
-      <div class="preset-buttons" id="presetButtons"></div>
+      <div class="panel-section presets-section">
+        <h2>预设</h2>
+        <hr>
+        <div class="preset-buttons" id="presetButtons"></div>
+      </div>
+
+      <div class="panel-section params-section">
+        <h2>参数</h2>
+        <hr>
+
+        <div class="param-group">
+          <label class="param-row" for="freq">
+            <span class="param-key">频率</span>
+            <span class="param-val" id="freqVal">4000 Hz</span>
+            <input type="range" id="freq" min="200" max="8000" value="4000" step="10">
+            <input type="number" id="freqNum" min="200" max="8000" value="4000" class="param-num">
+          </label>
+        </div>
+
+        <div class="param-group">
+          <label class="param-row" for="duration">
+            <span class="param-key">时长</span>
+            <span class="param-val" id="durVal">200 ms</span>
+            <input type="range" id="duration" min="50" max="1000" value="200" step="10">
+            <input type="number" id="durationNum" min="50" max="1000" value="200" class="param-num">
+          </label>
+        </div>
+
+        <div class="param-group">
+          <label class="param-row" for="gap">
+            <span class="param-key">间隔</span>
+            <span class="param-val" id="gapVal">50 ms</span>
+            <input type="range" id="gap" min="0" max="1000" value="50" step="10">
+            <input type="number" id="gapNum" min="0" max="1000" value="50" class="param-num">
+          </label>
+        </div>
+
+        <div class="param-group">
+          <label class="param-row" for="volume">
+            <span class="param-key">音量</span>
+            <span class="param-val" id="volVal">80 %</span>
+            <input type="range" id="volume" min="1" max="100" value="80" step="1">
+            <input type="number" id="volumeNum" min="1" max="100" value="80" class="param-num">
+          </label>
+        </div>
+
+        <div class="param-group">
+          <label class="param-row" for="waveType">
+            <span class="param-key">波形</span>
+            <select id="waveType">
+              <option value="square">方波</option>
+              <option value="sine">正弦波</option>
+              <option value="sawtooth">锯齿波</option>
+              <option value="triangle">三角波</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="btn-row">
+          <button id="btnPreviewSingle" class="btn-primary">试听</button>
+          <button id="btnAddToSequence" class="btn-secondary">加入序列</button>
+        </div>
+
+        <div class="live-wave-section">
+          <h3>实时波形</h3>
+          <div class="live-wave-container" id="liveWaveContainer">
+            <canvas id="liveWaveCanvas"></canvas>
+            <div class="live-wave-overlay" id="liveWaveOverlay">
+              <span class="live-wave-state" id="liveWaveState">初始化中...</span>
+            </div>
+            <div class="live-wave-readout" id="liveWaveReadout"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <div class="section params-section">
-      <h2>参数</h2>
-      <hr>
+    <div class="panel panel-right" id="panelRight">
 
-      <div class="param-group">
-        <label class="param-row" for="freq">
-          <span class="param-key">频率</span>
-          <span class="param-val" id="freqVal">4000 Hz</span>
-          <input type="range" id="freq" min="200" max="8000" value="4000" step="10">
-          <input type="number" id="freqNum" min="200" max="8000" value="4000" class="param-num">
-        </label>
+      <div class="panel-section sequence-section">
+        <h2>序列编辑器</h2>
+        <hr>
+
+        <div class="btn-row btn-row-toolbar">
+          <button id="btnPlayAll" class="btn-primary">播放全部</button>
+          <button id="btnStopAll" class="btn-danger">停止</button>
+          <button id="btnClearSequence" class="btn-secondary">清空</button>
+          <button id="btnExportJSON" class="btn-secondary">导出 JSON</button>
+          <button id="btnImportJSON" class="btn-secondary">导入 JSON</button>
+          <input type="file" id="importFile" accept=".json" style="display:none">
+        </div>
+
+        <div class="table-wrap">
+          <table id="sequenceTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>频率 / Hz</th>
+                <th>时长 / ms</th>
+                <th>间隔 / ms</th>
+                <th>波形</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="sequenceBody">
+              <tr class="empty-row"><td colspan="6">暂无音调 — 调节参数后点击"加入序列"</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="seq-footer" id="sequenceSummary"></div>
+
+        <button id="btnSavePattern" class="btn-success">保存为 WAV 并下载</button>
       </div>
 
-      <div class="param-group">
-        <label class="param-row" for="duration">
-          <span class="param-key">时长</span>
-          <span class="param-val" id="durVal">200 ms</span>
-          <input type="range" id="duration" min="50" max="1000" value="200" step="10">
-          <input type="number" id="durationNum" min="50" max="1000" value="200" class="param-num">
-        </label>
+      <div class="panel-section waveform-section">
+        <h2>序列波形预览</h2>
+        <hr>
+        <div class="waveform-container" id="seqWaveformContainer">
+          <canvas id="waveformCanvas"></canvas>
+          <div class="progress-bar" id="waveformProgress"></div>
+        </div>
       </div>
 
-      <div class="param-group">
-        <label class="param-row" for="gap">
-          <span class="param-key">间隔</span>
-          <span class="param-val" id="gapVal">50 ms</span>
-          <input type="range" id="gap" min="0" max="1000" value="50" step="10">
-          <input type="number" id="gapNum" min="0" max="1000" value="50" class="param-num">
-        </label>
-      </div>
-
-      <div class="param-group">
-        <label class="param-row" for="volume">
-          <span class="param-key">音量</span>
-          <span class="param-val" id="volVal">80 %</span>
-          <input type="range" id="volume" min="1" max="100" value="80" step="1">
-          <input type="number" id="volumeNum" min="1" max="100" value="80" class="param-num">
-        </label>
-      </div>
-
-      <div class="param-group">
-        <label class="param-row" for="waveType">
-          <span class="param-key">波形</span>
-          <select id="waveType">
-            <option value="square">方波</option>
-            <option value="sine">正弦波</option>
-            <option value="sawtooth">锯齿波</option>
-            <option value="triangle">三角波</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="btn-row">
-        <button id="btnPreviewSingle" class="btn-primary">试听</button>
-        <button id="btnAddToSequence" class="btn-secondary">加入序列</button>
-      </div>
-    </div>
-
-    <div class="section sequence-section">
-      <h2>序列编辑器</h2>
-      <hr>
-
-      <div class="btn-row btn-row-toolbar">
-        <button id="btnPlayAll" class="btn-primary">播放全部</button>
-        <button id="btnStopAll" class="btn-danger">停止</button>
-        <button id="btnClearSequence" class="btn-secondary">清空</button>
-        <button id="btnExportJSON" class="btn-secondary">导出 JSON</button>
-        <button id="btnImportJSON" class="btn-secondary">导入 JSON</button>
-        <input type="file" id="importFile" accept=".json" style="display:none">
-      </div>
-
-      <div class="table-wrap">
-        <table id="sequenceTable">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>频率 / Hz</th>
-              <th>时长 / ms</th>
-              <th>间隔 / ms</th>
-              <th>波形</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="sequenceBody">
-            <tr class="empty-row"><td colspan="6">暂无音调 — 调节参数后点击"加入序列"</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="seq-footer" id="sequenceSummary"></div>
-
-      <button id="btnSavePattern" class="btn-success">保存为 WAV 并下载</button>
-    </div>
-
-    <div class="section waveform-section">
-      <h2>波形预览</h2>
-      <hr>
-      <div class="waveform-container">
-        <canvas id="waveformCanvas" width="960" height="240"></canvas>
-        <div class="progress-bar" id="waveformProgress"></div>
-      </div>
-      <div class="waveform-info">
-        <span class="info-item">– 振幅</span>
-        <span class="info-item">– 零线</span>
-      </div>
     </div>
 
   </main>

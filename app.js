@@ -12,6 +12,14 @@
   var progressStartTime = 0;
   var progressDuration = 0;
 
+  var liveAnimId = null;
+  var livePhase = 0;
+  var liveReady = false;
+  var liveLastTime = 0;
+  var liveFpsCounter = 0;
+  var liveFpsDisplay = 0;
+  var liveFpsTimer = 0;
+
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
     { name: "garmin_alert", label: "警报音", pattern: [{ freq: 800, duration: 100, gap: 80 }, { freq: 4200, duration: 200, gap: 150 }, { freq: 800, duration: 100, gap: 80 }, { freq: 4200, duration: 200, gap: 0 }] },
@@ -46,6 +54,10 @@
   var waveSelect = $("#waveType");
   var waveformCanvas = $("#waveformCanvas");
   var waveformProgress = $("#waveformProgress");
+  var liveWaveCanvas = $("#liveWaveCanvas");
+  var liveWaveOverlay = $("#liveWaveOverlay");
+  var liveWaveState = $("#liveWaveState");
+  var liveWaveReadout = $("#liveWaveReadout");
 
   function getFreq() { return parseInt(freqSlider.value) || 4000; }
   function getDuration() { return parseInt(durSlider.value) || 200; }
@@ -78,9 +90,13 @@
 
   function getAudioContext() {
     if (!audioCtx || audioCtx.state === "closed") {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) {
+        return null;
+      }
     }
-    if (audioCtx.state === "suspended") {
+    if (audioCtx && audioCtx.state === "suspended") {
       audioCtx.resume();
     }
     return audioCtx;
@@ -89,6 +105,11 @@
   function mapWaveToWebAudio(wave) {
     var map = { sine: "sine", square: "square", sawtooth: "sawtooth", triangle: "triangle" };
     return map[wave] || "square";
+  }
+
+  function mapWaveLabel(wave) {
+    var map = { sine: "正弦波", square: "方波", sawtooth: "锯齿波", triangle: "三角波" };
+    return map[wave] || "方波";
   }
 
   function stopProgress() {
@@ -118,6 +139,7 @@
 
   function playPreview(freq, durationMs, waveType, volume) {
     var ctx = getAudioContext();
+    if (!ctx) { setLiveError("音频上下文不可用"); return; }
     var now = ctx.currentTime;
     var vol = volume != null ? volume : getVolume();
     var dur = (durationMs || getDuration()) / 1000;
@@ -143,6 +165,7 @@
   function playSequence() {
     if (sequence.length === 0) return;
     var ctx = getAudioContext();
+    if (!ctx) { setLiveError("音频上下文不可用"); return; }
     var now = ctx.currentTime;
     var vol = getVolume();
     var t = now;
@@ -377,18 +400,49 @@
   }
 
   function drawSequenceWaveform() {
-    if (sequence.length === 0) return;
+    if (sequence.length === 0) {
+      drawEmptyWaveform();
+      return;
+    }
     currentWaveformData = generateLocalPatternWaveform(sequence, getVolume());
     drawWaveform(currentWaveformData);
   }
 
-  function drawWaveform(data) {
-    if (!data || data.length === 0) return;
+  function drawEmptyWaveform() {
     var canvas = waveformCanvas;
     var dpr = window.devicePixelRatio || 1;
     var rect = canvas.getBoundingClientRect();
-    var w = rect.width;
-    var h = 240;
+    var w = rect.width || 400;
+    var h = 120;
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+
+    var ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+
+    ctx.fillStyle = "#181715";
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = "rgba(250, 249, 245, 0.06)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 8]);
+    ctx.beginPath();
+    ctx.moveTo(0, h / 2);
+    ctx.lineTo(w, h / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawWaveform(data) {
+    if (!data || data.length === 0) { drawEmptyWaveform(); return; }
+    var canvas = waveformCanvas;
+    var dpr = window.devicePixelRatio || 1;
+    var rect = canvas.getBoundingClientRect();
+    var w = rect.width || 400;
+    var h = 120;
 
     canvas.width = w * dpr;
     canvas.height = h * dpr;
@@ -426,6 +480,254 @@
       if (i === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
     }
     ctx.stroke();
+  }
+
+  function setLiveError(msg) {
+    liveWaveState.textContent = msg;
+    liveWaveState.className = "live-wave-state error";
+    liveWaveOverlay.classList.remove("hidden");
+  }
+
+  function setLiveReady() {
+    liveWaveOverlay.classList.add("hidden");
+    liveWaveReadout.classList.add("visible");
+  }
+
+  function initLiveWaveform() {
+    try {
+      var testCanvas = document.createElement("canvas");
+      var testCtx = testCanvas.getContext("2d");
+      if (!testCtx) throw new Error("Canvas 2D 不可用");
+
+      startLiveWaveform();
+      setLiveReady();
+    } catch (e) {
+      setLiveError("波形渲染初始化失败");
+    }
+  }
+
+  function startLiveWaveform() {
+    if (liveAnimId) return;
+    liveLastTime = performance.now();
+    liveFpsTimer = liveLastTime;
+    liveFpsCounter = 0;
+    liveFpsDisplay = 60;
+    animateLiveWaveform();
+  }
+
+  function animateLiveWaveform() {
+    try {
+      var now = performance.now();
+      var dt = now - liveLastTime;
+      liveLastTime = now;
+
+      liveFpsCounter++;
+      if (now - liveFpsTimer >= 1000) {
+        liveFpsDisplay = liveFpsCounter;
+        liveFpsCounter = 0;
+        liveFpsTimer = now;
+      }
+
+      drawLiveFrame();
+    } catch (e) {
+      setLiveError("波形渲染错误");
+      stopLiveWaveform();
+      return;
+    }
+
+    liveAnimId = requestAnimationFrame(animateLiveWaveform);
+  }
+
+  function drawLiveFrame() {
+    var canvas = liveWaveCanvas;
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var dpr = window.devicePixelRatio || 1;
+    var rect = canvas.getBoundingClientRect();
+    var w = rect.width;
+    var h = rect.height;
+
+    if (w <= 0 || h <= 0) return;
+
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+
+    var freq = getFreq();
+    var waveType = getWave();
+    var volume = getVolume();
+
+    var colors = {
+      bg: "#181715",
+      grid: "rgba(250, 249, 245, 0.05)",
+      gridMajor: "rgba(250, 249, 245, 0.08)",
+      wave: "#cc785c",
+      waveGlow: "rgba(204, 120, 92, 0.15)",
+      spectrum: "rgba(93, 184, 166, 0.6)",
+      spectrumBar: "#5db8a6",
+      text: "#8e8b82",
+      highlight: "#faf9f5"
+    };
+
+    var margin = { top: 8, right: 8, bottom: 36, left: 8 };
+    var plotW = w - margin.left - margin.right;
+    var plotH = h - margin.top - margin.bottom;
+    var midY = margin.top + plotH / 2;
+
+    ctx.fillStyle = colors.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = colors.gridMajor;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath();
+    ctx.moveTo(margin.left, midY);
+    ctx.lineTo(w - margin.right, midY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = colors.grid;
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([2, 6]);
+    var ampRange = plotH * 0.44;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, midY - ampRange);
+    ctx.lineTo(w - margin.right, midY - ampRange);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(margin.left, midY + ampRange);
+    ctx.lineTo(w - margin.right, midY + ampRange);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(margin.left, margin.top, plotW, plotH);
+    ctx.clip();
+
+    var cycleSpan = plotW;
+    var totalCycles = 3;
+    var freqScale = totalCycles / cycleSpan;
+    var scrollSpeed = (freq / 8000) * 800;
+    livePhase += scrollSpeed * (1 / 60);
+
+    var glowMargin = 4;
+    ctx.strokeStyle = colors.waveGlow;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    for (var x = -glowMargin; x < w + glowMargin; x += 1) {
+      var phaseGlow = (x * freqScale) + livePhase;
+      var valGlow = sampleWave(waveType, phaseGlow);
+      var yGlow = midY - valGlow * ampRange * volume;
+      if (x === -glowMargin) ctx.moveTo(x, yGlow);
+      else ctx.lineTo(x, yGlow);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = colors.wave;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (var x = 0; x < w; x += 1) {
+      var phase = (x * freqScale) + livePhase;
+      var val = sampleWave(waveType, phase);
+      var y = midY - val * ampRange * volume;
+      if (x === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.restore();
+
+    drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors);
+
+    ctx.fillStyle = colors.text;
+    ctx.font = "11px 'JetBrains Mono', monospace";
+    ctx.textAlign = "left";
+    ctx.fillText("f = " + freq + " Hz", margin.left + 2, h - margin.bottom + 14);
+
+    ctx.textAlign = "right";
+    ctx.fillText(mapWaveLabel(waveType), w - margin.right - 2, h - margin.bottom + 14);
+
+    ctx.textAlign = "right";
+    var volPct = Math.round(volume * 100);
+    ctx.fillText("vol " + volPct + "%", w - margin.right - 2, h - margin.bottom + 26);
+
+    if (liveWaveReadout) {
+      liveWaveReadout.innerHTML =
+        '<span>' + freq + ' Hz</span>' +
+        ' | ' + liveFpsDisplay + ' fps' +
+        ' | ' + mapWaveLabel(waveType) +
+        ' | vol ' + volPct + '%';
+    }
+  }
+
+  function drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors) {
+    var barAreaH = 20;
+    var barAreaY = h - margin.bottom - barAreaH - 2;
+    var barAreaLeft = margin.left;
+    var barAreaRight = w - margin.right;
+    var barAreaW = barAreaRight - barAreaLeft;
+
+    var harmonics = getHarmonics(waveType, 8);
+    var barCount = harmonics.length;
+    var barWidth = Math.max(2, (barAreaW / barCount) - 2);
+    var barGap = 2;
+    var totalBarsW = barCount * (barWidth + barGap) - barGap;
+
+    var startX = barAreaLeft + (barAreaW - totalBarsW) / 2;
+
+    ctx.fillStyle = "rgba(250, 249, 245, 0.03)";
+    ctx.fillRect(barAreaLeft, barAreaY, barAreaW, barAreaH);
+
+    for (var i = 0; i < barCount; i++) {
+      var x = startX + i * (barWidth + barGap);
+      var barHeight = barAreaH * harmonics[i];
+
+      var isFundamental = (i === 0);
+      ctx.fillStyle = isFundamental
+        ? colors.wave
+        : colors.spectrumBar;
+
+      ctx.globalAlpha = isFundamental ? 0.9 : 0.45;
+      ctx.fillRect(x, barAreaY + barAreaH - barHeight, barWidth, barHeight);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function getHarmonics(waveType, count) {
+    var result = [];
+    if (waveType === "sine") {
+      result.push(1);
+      for (var i = 1; i < count; i++) result.push(0);
+    } else if (waveType === "square") {
+      for (var i = 0; i < count; i++) {
+        var n = i * 2 + 1;
+        result.push(1 / n);
+      }
+    } else if (waveType === "sawtooth") {
+      for (var i = 0; i < count; i++) {
+        var n = i + 1;
+        result.push(1 / n);
+      }
+    } else if (waveType === "triangle") {
+      for (var i = 0; i < count; i++) {
+        var n = i * 2 + 1;
+        result.push(1 / (n * n));
+      }
+    } else {
+      for (var i = 0; i < count; i++) result.push(i === 0 ? 1 : 0);
+    }
+    return result;
+  }
+
+  function stopLiveWaveform() {
+    if (liveAnimId) {
+      cancelAnimationFrame(liveAnimId);
+      liveAnimId = null;
+    }
   }
 
   function saveAndDownload() {
@@ -535,20 +837,10 @@
   $("#btnClearSequence").addEventListener("click", function () {
     sequence = [];
     renderSequenceTable();
+    drawEmptyWaveform();
     currentWaveformData = null;
     stopProgress();
-    var canvas = waveformCanvas;
-    var ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
     highlightPresetButton(null);
-    canvas.width = canvas.getBoundingClientRect().width * (window.devicePixelRatio || 1);
-    canvas.height = 240 * (window.devicePixelRatio || 1);
-    canvas.style.width = canvas.getBoundingClientRect().width + "px";
-    canvas.style.height = "240px";
-    ctx = canvas.getContext("2d");
-    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
-    ctx.fillStyle = "#181715";
-    ctx.fillRect(0, 0, canvas.getBoundingClientRect().width, 240);
   });
 
   $("#btnExportJSON").addEventListener("click", exportJSON);
@@ -591,10 +883,28 @@
     el.addEventListener("change", drawLocalWaveform);
   });
 
+  var resizeTimeout;
   window.addEventListener("resize", function () {
-    if (currentWaveformData) { drawWaveform(currentWaveformData); }
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(function () {
+      if (currentWaveformData) { drawWaveform(currentWaveformData); }
+    }, 150);
+  });
+
+  window.addEventListener("beforeunload", function () {
+    stopLiveWaveform();
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+      stopLiveWaveform();
+    } else {
+      startLiveWaveform();
+    }
   });
 
   renderPresetButtons();
   drawLocalWaveform();
+  drawEmptyWaveform();
+  initLiveWaveform();
 })();
