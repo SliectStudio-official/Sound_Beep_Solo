@@ -1100,6 +1100,7 @@
   });
 
   renderPresetButtons();
+  renderSequenceTable();
   drawLocalWaveform();
   drawEmptyWaveform();
   initLiveWaveform();
