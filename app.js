@@ -714,32 +714,36 @@
     ctx.strokeStyle = colors.grid;
     ctx.lineWidth = 0.5;
     ctx.setLineDash([2, 6]);
-    var ampRange = plotH * 0.44;
+    var baseAmpRange = plotH * 0.44;
+    var ampRange = volume > 0.05 ? baseAmpRange / volume : baseAmpRange;
+    if (ampRange > baseAmpRange * 2) ampRange = baseAmpRange * 2;
     ctx.beginPath();
-    ctx.moveTo(margin.left, midY - ampRange);
-    ctx.lineTo(w - margin.right, midY - ampRange);
+    ctx.moveTo(margin.left, midY - baseAmpRange);
+    ctx.lineTo(w - margin.right, midY - baseAmpRange);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(margin.left, midY + ampRange);
-    ctx.lineTo(w - margin.right, midY + ampRange);
+    ctx.moveTo(margin.left, midY + baseAmpRange);
+    ctx.lineTo(w - margin.right, midY + baseAmpRange);
     ctx.stroke();
     ctx.setLineDash([]);
 
     var volPctForScale = Math.round(volume * 100);
-    var actualAmpPx = ampRange * volume;
 
     ctx.strokeStyle = "rgba(250, 249, 245, 0.06)";
     ctx.lineWidth = 0.5;
     ctx.setLineDash([3, 5]);
-    if (volume < 1 && actualAmpPx > 8) {
-      ctx.beginPath();
-      ctx.moveTo(margin.left, midY - actualAmpPx);
-      ctx.lineTo(w - margin.right, midY - actualAmpPx);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(margin.left, midY + actualAmpPx);
-      ctx.lineTo(w - margin.right, midY + actualAmpPx);
-      ctx.stroke();
+    if (volume < 1) {
+      var refAmpPx = baseAmpRange * volume;
+      if (refAmpPx > 8) {
+        ctx.beginPath();
+        ctx.moveTo(margin.left, midY - refAmpPx);
+        ctx.lineTo(w - margin.right, midY - refAmpPx);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(margin.left, midY + refAmpPx);
+        ctx.lineTo(w - margin.right, midY + refAmpPx);
+        ctx.stroke();
+      }
     }
     ctx.setLineDash([]);
 
@@ -748,14 +752,15 @@
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
 
-    ctx.fillText(volPctForScale + "%", margin.left - 4, midY - actualAmpPx);
-    ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + actualAmpPx);
+    var labelAmpPx = Math.min(ampRange * volume, baseAmpRange);
+    ctx.fillText(volPctForScale + "%", margin.left - 4, midY - labelAmpPx);
+    ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + labelAmpPx);
     ctx.fillText("0%", margin.left - 4, midY);
 
     if (volume < 1) {
       ctx.fillStyle = "rgba(250, 249, 245, 0.35)";
-      ctx.fillText("100%", margin.left - 4, midY - ampRange);
-      ctx.fillText("-100%", margin.left - 4, midY + ampRange);
+      ctx.fillText("100%", margin.left - 4, midY - baseAmpRange);
+      ctx.fillText("-100%", margin.left - 4, midY + baseAmpRange);
     }
 
     ctx.textAlign = "left";
