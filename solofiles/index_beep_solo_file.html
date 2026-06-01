@@ -927,6 +927,7 @@
 </pre>
         <p class="subtitle">电子提示音可视化生成器</p>
         <p class="subtitle-desc">频率 / 波形 / 序列 / 导出 — 实时调节，即时预览</p>
+        <p class="subtitle-desc">版本260531.1052</p>
       </header>
 
       <div class="panel-section presets-section">
@@ -1010,6 +1011,8 @@
               <label class="live-fps-control">
                 <span class="live-fps-label">刷新率</span>
                 <select id="liveFpsSelect">
+                  <option value="0.5">0.5 fps</option>
+                  <option value="1">1 fps</option>
                   <option value="15">15 fps</option>
                   <option value="24">24 fps</option>
                   <option value="30">30 fps</option>
@@ -1017,6 +1020,16 @@
                   <option value="60">60 fps</option>
                   <option value="90">90 fps</option>
                   <option value="120" selected>120 fps</option>
+                </select>
+              </label>
+              <label class="live-fps-control">
+                <span class="live-fps-label">周期</span>
+                <select id="liveCyclesSelect">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                  <option value="5">5</option>
+                  <option value="10">10</option>
                 </select>
               </label>
             </div>
@@ -1072,13 +1085,14 @@
                 <th>频率 / Hz</th>
                 <th>时长 / ms</th>
                 <th>间隔 / ms</th>
+                <th>音量 / %</th>
                 <th>波形</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody id="sequenceBody">
               <tr class="empty-row">
-                <td colspan="6">暂无音调 — 调节参数后点击"加入序列"</td>
+                <td colspan="7">暂无音调 — 调节参数后点击"加入序列"</td>
               </tr>
             </tbody>
           </table>
@@ -1111,6 +1125,7 @@
       var RELEASE_MS = 3;
 
       var audioCtx = null;
+      var activeOscillators = [];
       var sequence = [];
       var currentWaveformData = null;
       var progressAnimId = null;
@@ -1128,9 +1143,10 @@
       var liveLastFrameTime = 0;
       var livePausedPhase = 0;
       var liveSmooth = false;
-      var liveSmoothAlpha = 0.2;
-      var liveOffscreen = null;
-      var liveOffscreenCtx = null;
+      var liveEcgBuffer = null;
+      var liveEcgBufferSize = 0;
+      var liveEcgPhase = 0;
+      var liveEcgSubPixel = 0;
 
       var PRESETS = [
         { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -1174,6 +1190,7 @@
       var pauseIcon = $("#pauseIcon");
       var pauseLabel = $("#pauseLabel");
       var liveFpsSelect = $("#liveFpsSelect");
+      var liveCyclesSelect = $("#liveCyclesSelect");
       var lwpFreq = $("#lwpFreq");
       var lwpWave = $("#lwpWave");
       var lwpVol = $("#lwpVol");
@@ -1221,7 +1238,7 @@
           }
         }
         if (audioCtx && audioCtx.state === "suspended") {
-          audioCtx.resume();
+          audioCtx.resume().catch(function () { });
         }
         return audioCtx;
       }
@@ -1261,6 +1278,20 @@
         }
       }
 
+      function stopAllAudio() {
+        for (var i = activeOscillators.length - 1; i >= 0; i--) {
+          try {
+            activeOscillators[i].osc.stop();
+            activeOscillators[i].osc.disconnect();
+          } catch (e) { }
+          try {
+            activeOscillators[i].gain.disconnect();
+          } catch (e) { }
+        }
+        activeOscillators = [];
+        stopProgress();
+      }
+
       function playTone(ctx, freq, duration, waveType, volume, startTime) {
         var osc = ctx.createOscillator();
         var gain = ctx.createGain();
@@ -1276,9 +1307,18 @@
         gain.connect(ctx.destination);
         osc.start(startTime);
         osc.stop(startTime + duration + 0.01);
+
+        var nodePair = { osc: osc, gain: gain };
+        activeOscillators.push(nodePair);
+        osc.onended = function () {
+          var idx = activeOscillators.indexOf(nodePair);
+          if (idx !== -1) activeOscillators.splice(idx, 1);
+          try { gain.disconnect(); } catch (e) { }
+        };
       }
 
       function playPreview(freq, durationMs, waveType, volume) {
+        stopAllAudio();
         var ctx = getAudioContext();
         if (!ctx) { setLiveError("音频上下文不可用"); return; }
         var now = ctx.currentTime;
@@ -1291,6 +1331,7 @@
 
       function playSequence() {
         if (sequence.length === 0) return;
+        stopAllAudio();
         var ctx = getAudioContext();
         if (!ctx) { setLiveError("音频上下文不可用"); return; }
         var now = ctx.currentTime;
@@ -1320,6 +1361,18 @@
           case "triangle": return 2 * Math.abs(2 * (phase - Math.floor(phase + 0.5))) - 1;
           default: return Math.sin(2 * Math.PI * phase);
         }
+      }
+
+      function sampleCycle(t, periodMs, durationMs, freq, wave) {
+        if (t >= durationMs) return 0;
+        var env = 1;
+        if (t < ATTACK_MS) {
+          env = t / ATTACK_MS;
+        } else if (t > durationMs - RELEASE_MS) {
+          env = (durationMs - t) / RELEASE_MS;
+        }
+        var phase = (freq * t) / 1000;
+        return sampleWave(wave, phase) * env;
       }
 
       function generateSamples(freq, durationMs, wave, volume) {
@@ -1429,16 +1482,18 @@
       function renderSequenceTable() {
         var tbody = $("#sequenceBody");
         if (sequence.length === 0) {
-          tbody.innerHTML = '<tr class="empty-row"><td colspan="6">暂无音调 — 调节参数后点击"加入序列"</td></tr>';
+          tbody.innerHTML = '<tr class="empty-row"><td colspan="7">暂无音调 — 调节参数后点击"加入序列"</td></tr>';
         } else {
           tbody.innerHTML = sequence
             .map(function (item, i) {
+              var volPct = item.volume != null ? Math.round(item.volume * 100) : Math.round(getVolume() * 100);
               return (
                 '<tr>' +
                 '<td>' + (i + 1) + '</td>' +
                 '<td><input type="number" value="' + item.freq + '" min="20" max="20000" data-idx="' + i + '" data-field="freq"></td>' +
                 '<td><input type="number" value="' + item.duration + '" min="10" max="5000" data-idx="' + i + '" data-field="duration"></td>' +
                 '<td><input type="number" value="' + item.gap + '" min="0" max="5000" data-idx="' + i + '" data-field="gap"></td>' +
+                '<td><input type="number" value="' + volPct + '" min="1" max="100" data-idx="' + i + '" data-field="volume"></td>' +
                 '<td><select data-idx="' + i + '" data-field="wave">' +
                 '<option value="square"' + (item.wave === "square" ? " selected" : "") + '>方波</option>' +
                 '<option value="sine"' + (item.wave === "sine" ? " selected" : "") + '>正弦波</option>' +
@@ -1755,21 +1810,14 @@
         var pw = Math.round(w * dpr);
         var ph = Math.round(h * dpr);
 
-        if (liveSmooth) {
-          if (!liveOffscreen || liveOffscreen.width !== pw || liveOffscreen.height !== ph) {
-            liveOffscreen = document.createElement("canvas");
-            liveOffscreen.width = pw;
-            liveOffscreen.height = ph;
-            liveOffscreenCtx = liveOffscreen.getContext("2d");
-          }
+        if (canvas.width !== pw || canvas.height !== ph) {
+          canvas.width = pw;
+          canvas.height = ph;
+          canvas.style.width = w + "px";
+          canvas.style.height = h + "px";
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.scale(dpr, dpr);
         }
-
-        canvas.width = pw;
-        canvas.height = ph;
-        canvas.style.width = w + "px";
-        canvas.style.height = h + "px";
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.scale(dpr, dpr);
 
         var freq = getFreq();
         var waveType = getWave();
@@ -1787,7 +1835,7 @@
           highlight: "#faf9f5"
         };
 
-        var margin = { top: 8, right: 8, bottom: 56, left: 8 };
+        var margin = { top: 8, right: 8, bottom: 56, left: 36 };
         var plotW = w - margin.left - margin.right;
         var plotH = h - margin.top - margin.bottom;
         var midY = margin.top + plotH / 2;
@@ -1807,102 +1855,214 @@
         ctx.strokeStyle = colors.grid;
         ctx.lineWidth = 0.5;
         ctx.setLineDash([2, 6]);
-        var ampRange = plotH * 0.44;
+        var baseAmpRange = plotH * 0.44;
+        var minWaveRatio = 0.075;
+        var ampRange = baseAmpRange / Math.max(volume, minWaveRatio);
         ctx.beginPath();
-        ctx.moveTo(margin.left, midY - ampRange);
-        ctx.lineTo(w - margin.right, midY - ampRange);
+        ctx.moveTo(margin.left, midY - baseAmpRange);
+        ctx.lineTo(w - margin.right, midY - baseAmpRange);
         ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(margin.left, midY + ampRange);
-        ctx.lineTo(w - margin.right, midY + ampRange);
+        ctx.moveTo(margin.left, midY + baseAmpRange);
+        ctx.lineTo(w - margin.right, midY + baseAmpRange);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        if (liveSmooth && liveOffscreen) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(margin.left, margin.top, plotW, plotH);
-          ctx.clip();
-          ctx.globalAlpha = liveSmoothAlpha;
-          ctx.drawImage(liveOffscreen, 0, 0, pw, ph, 0, 0, w, h);
-          ctx.globalAlpha = 1;
-          ctx.restore();
+        var volPctForScale = Math.round(volume * 100);
+
+        ctx.strokeStyle = "rgba(250, 249, 245, 0.06)";
+        ctx.lineWidth = 0.5;
+        ctx.setLineDash([3, 5]);
+        if (volume < 1) {
+          var refAmpPx = baseAmpRange * volume;
+          if (refAmpPx > 8) {
+            ctx.beginPath();
+            ctx.moveTo(margin.left, midY - refAmpPx);
+            ctx.lineTo(w - margin.right, midY - refAmpPx);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(margin.left, midY + refAmpPx);
+            ctx.lineTo(w - margin.right, midY + refAmpPx);
+            ctx.stroke();
+          }
         }
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = colors.text;
+        ctx.font = "10px 'JetBrains Mono', monospace";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+
+        var curAmpPx = ampRange * volume;
+        var refAmpPx = baseAmpRange;
+        var labelOffset = 14;
+
+        if (volume < 1 && Math.abs(curAmpPx - refAmpPx) < labelOffset) {
+          ctx.fillText(volPctForScale + "%", margin.left - 4, midY - curAmpPx - labelOffset);
+          ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + curAmpPx + labelOffset);
+        } else {
+          ctx.fillText(volPctForScale + "%", margin.left - 4, midY - curAmpPx);
+          ctx.fillText("-" + volPctForScale + "%", margin.left - 4, midY + curAmpPx);
+        }
+        ctx.fillText("0%", margin.left - 4, midY);
+
+        if (volume < 1) {
+          ctx.fillStyle = "rgba(250, 249, 245, 0.35)";
+          if (Math.abs(curAmpPx - refAmpPx) < labelOffset) {
+            ctx.fillText("100%", margin.left - 4, midY - baseAmpRange + labelOffset);
+            ctx.fillText("-100%", margin.left - 4, midY + baseAmpRange - labelOffset);
+          } else {
+            ctx.fillText("100%", margin.left - 4, midY - baseAmpRange);
+            ctx.fillText("-100%", margin.left - 4, midY + baseAmpRange);
+          }
+        }
+
+        ctx.textAlign = "left";
 
         ctx.save();
         ctx.beginPath();
         ctx.rect(margin.left, margin.top, plotW, plotH);
         ctx.clip();
 
-        var cycleSpan = plotW;
-        var totalCycles = 3;
-        var freqScale = totalCycles / cycleSpan;
-        var scrollSpeed = (freq / 8000) * 800;
-        livePhase += scrollSpeed * (dt / 1000);
+        var duration = getDuration();
+        var gap = getGap();
+        var periodMs = duration + gap;
+        var cyclesToShow = parseInt(liveCyclesSelect.value) || 3;
 
-        var glowMargin = 4;
-        ctx.strokeStyle = colors.waveGlow;
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        for (var x = -glowMargin; x < w + glowMargin; x += 1) {
-          var phaseGlow = (x * freqScale) + livePhase;
-          var valGlow = sampleWave(waveType, phaseGlow);
-          var yGlow = midY - valGlow * ampRange * volume;
-          if (x === -glowMargin) ctx.moveTo(x, yGlow);
-          else ctx.lineTo(x, yGlow);
-        }
-        ctx.stroke();
+        var wavePeriodMs = 1000 / freq;
+        var totalWaveDuration = wavePeriodMs * cyclesToShow;
+        var msPerPixel = totalWaveDuration / plotW;
 
-        ctx.strokeStyle = colors.wave;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        for (var x = 0; x < w; x += 1) {
-          var phase = (x * freqScale) + livePhase;
-          var val = sampleWave(waveType, phase);
-          var y = midY - val * ampRange * volume;
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+        if (liveSmooth) {
+          if (!liveEcgBuffer || liveEcgBufferSize !== Math.round(plotW)) {
+            liveEcgBufferSize = Math.round(plotW);
+            liveEcgBuffer = new Float32Array(liveEcgBufferSize);
+            liveEcgPhase = 0;
+            liveEcgSubPixel = 0;
+            for (var initIdx = 0; initIdx < liveEcgBufferSize; initIdx++) {
+              var phase = (freq * initIdx * msPerPixel) / 1000;
+              liveEcgBuffer[initIdx] = sampleWave(waveType, phase) * volume;
+            }
+          }
+
+          var scrollSpeed = plotW * 0.5;
+          liveEcgSubPixel += scrollSpeed * (dt / 1000);
+          var scrollPixels = Math.floor(liveEcgSubPixel);
+          liveEcgSubPixel -= scrollPixels;
+          if (scrollPixels > liveEcgBufferSize) scrollPixels = liveEcgBufferSize;
+
+          if (scrollPixels > 0) {
+            liveEcgBuffer.copyWithin(0, scrollPixels, liveEcgBufferSize);
+            for (var i = 0; i < scrollPixels; i++) {
+              liveEcgPhase += msPerPixel;
+              var phase = (freq * liveEcgPhase) / 1000;
+              var writeIdx = liveEcgBufferSize - scrollPixels + i;
+              liveEcgBuffer[writeIdx] = sampleWave(waveType, phase) * volume;
+            }
+          }
+
+          var glowMargin = 4;
+          ctx.strokeStyle = colors.waveGlow;
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          for (var xi = 0; xi < liveEcgBufferSize; xi++) {
+            var yGlow = midY - liveEcgBuffer[xi] * ampRange;
+            if (xi === 0) ctx.moveTo(margin.left + xi, yGlow);
+            else ctx.lineTo(margin.left + xi, yGlow);
+          }
+          ctx.stroke();
+
+          ctx.strokeStyle = colors.wave;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          for (var xi2 = 0; xi2 < liveEcgBufferSize; xi2++) {
+            var yVal = midY - liveEcgBuffer[xi2] * ampRange;
+            if (xi2 === 0) ctx.moveTo(margin.left + xi2, yVal);
+            else ctx.lineTo(margin.left + xi2, yVal);
+          }
+          ctx.stroke();
+
+          var cursorX = margin.left + liveEcgBufferSize - 1;
+          var cursorY = midY - liveEcgBuffer[liveEcgBufferSize - 1] * ampRange;
+          ctx.beginPath();
+          ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
+          ctx.fillStyle = colors.wave;
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(cursorX, cursorY, 6, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
+          ctx.fill();
+        } else {
+          livePhase += plotW * msPerPixel * 0.5 * (dt / 1000);
+
+          var glowMargin = 4;
+          ctx.strokeStyle = colors.waveGlow;
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          for (var x = -glowMargin; x < w + glowMargin; x += 1) {
+            var t = livePhase + (x - margin.left) * msPerPixel;
+            var phase = (freq * t) / 1000;
+            var valGlow = sampleWave(waveType, phase);
+            var yGlow = midY - valGlow * ampRange * volume;
+            if (x === -glowMargin) ctx.moveTo(x, yGlow);
+            else ctx.lineTo(x, yGlow);
+          }
+          ctx.stroke();
+
+          ctx.strokeStyle = colors.wave;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          for (var x = 0; x < w; x += 1) {
+            var t = livePhase + (x - margin.left) * msPerPixel;
+            var phase = (freq * t) / 1000;
+            var val = sampleWave(waveType, phase);
+            var y = midY - val * ampRange * volume;
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
         }
-        ctx.stroke();
 
         ctx.restore();
 
-        drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors);
+        ctx.fillStyle = colors.text;
+        ctx.font = "9px 'JetBrains Mono', monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
 
-        if (liveSmooth && liveOffscreen && liveOffscreenCtx) {
-          liveOffscreenCtx.clearRect(0, 0, pw, ph);
-          liveOffscreenCtx.save();
-          liveOffscreenCtx.scale(dpr, dpr);
-          liveOffscreenCtx.beginPath();
-          liveOffscreenCtx.rect(margin.left, margin.top, plotW, plotH);
-          liveOffscreenCtx.clip();
+        var totalMs = totalWaveDuration;
+        var tickStepMs;
+        if (totalMs <= 2) tickStepMs = 0.25;
+        else if (totalMs <= 5) tickStepMs = 0.5;
+        else if (totalMs <= 10) tickStepMs = 1;
+        else if (totalMs <= 25) tickStepMs = 2.5;
+        else if (totalMs <= 50) tickStepMs = 5;
+        else if (totalMs <= 100) tickStepMs = 10;
+        else if (totalMs <= 300) tickStepMs = 25;
+        else if (totalMs <= 600) tickStepMs = 50;
+        else if (totalMs <= 1500) tickStepMs = 100;
+        else tickStepMs = 200;
 
-          liveOffscreenCtx.strokeStyle = colors.waveGlow;
-          liveOffscreenCtx.lineWidth = 5;
-          liveOffscreenCtx.beginPath();
-          for (var x2 = -glowMargin; x2 < w + glowMargin; x2 += 1) {
-            var pg = (x2 * freqScale) + livePhase;
-            var vg = sampleWave(waveType, pg);
-            var yg = midY - vg * ampRange * volume;
-            if (x2 === -glowMargin) liveOffscreenCtx.moveTo(x2, yg);
-            else liveOffscreenCtx.lineTo(x2, yg);
-          }
-          liveOffscreenCtx.stroke();
+        var tickCount = Math.ceil(totalMs / tickStepMs);
+        for (var xt = 0; xt <= tickCount; xt++) {
+          var tMs = xt * tickStepMs;
+          if (tMs > totalMs) tMs = totalMs;
+          var tx = margin.left + (tMs / totalMs) * plotW;
+          var label = tMs < 1 ? tMs.toFixed(2) + "ms" : tMs < 10 ? tMs.toFixed(1) + "ms" : Math.round(tMs) + "ms";
+          ctx.fillText(label, tx, midY + baseAmpRange + 4);
 
-          liveOffscreenCtx.strokeStyle = colors.wave;
-          liveOffscreenCtx.lineWidth = 1.5;
-          liveOffscreenCtx.beginPath();
-          for (var x3 = 0; x3 < w; x3 += 1) {
-            var p = (x3 * freqScale) + livePhase;
-            var v = sampleWave(waveType, p);
-            var yv = midY - v * ampRange * volume;
-            if (x3 === 0) liveOffscreenCtx.moveTo(x3, yv);
-            else liveOffscreenCtx.lineTo(x3, yv);
-          }
-          liveOffscreenCtx.stroke();
-
-          liveOffscreenCtx.restore();
+          ctx.strokeStyle = "rgba(250, 249, 245, 0.08)";
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.moveTo(tx, margin.top);
+          ctx.lineTo(tx, midY + baseAmpRange);
+          ctx.stroke();
         }
+
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+
+        drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors);
 
         var volPct = Math.round(volume * 100);
         if (lwpFreq) lwpFreq.textContent = freq + " Hz";
@@ -2023,11 +2183,11 @@
             if (!Array.isArray(data)) throw new Error("JSON 格式错误，需要数组");
             sequence = data.map(function (item) {
               return {
-                freq: item.freq || 4000,
-                duration: item.duration || 200,
-                gap: item.gap || 0,
-                wave: item.wave || "square",
-                volume: item.volume != null ? item.volume : null,
+                freq: Math.max(20, Math.min(20000, item.freq || 4000)),
+                duration: Math.max(10, Math.min(5000, item.duration || 200)),
+                gap: Math.max(0, Math.min(5000, item.gap || 0)),
+                wave: ["sine", "square", "sawtooth", "triangle"].indexOf(item.wave) !== -1 ? item.wave : "square",
+                volume: item.volume != null ? Math.max(0.01, Math.min(1, item.volume)) : null,
               };
             });
             renderSequenceTable();
@@ -2080,11 +2240,7 @@
       });
 
       $("#btnStopAll").addEventListener("click", function () {
-        if (audioCtx && audioCtx.state === "suspended") { audioCtx.resume(); }
-        if (audioCtx && audioCtx.state === "running") {
-          audioCtx.suspend();
-        }
-        stopProgress();
+        stopAllAudio();
       });
 
       $("#btnClearSequence").addEventListener("click", function () {
@@ -2120,6 +2276,9 @@
         if (isNaN(idx) || !field) return;
         if (field === "wave") {
           sequence[idx][field] = target.value;
+        } else if (field === "volume") {
+          var v = parseInt(target.value);
+          if (!isNaN(v)) { sequence[idx][field] = Math.max(1, Math.min(100, v)) / 100; }
         } else {
           var v = parseInt(target.value);
           if (!isNaN(v)) { sequence[idx][field] = v; }
@@ -2133,8 +2292,20 @@
       });
 
       [freqSlider, durSlider, gapSlider, volSlider, waveSelect].forEach(function (el) {
-        el.addEventListener("change", drawLocalWaveform);
-        el.addEventListener("input", drawLocalWaveform);
+        el.addEventListener("change", function () {
+          liveEcgBuffer = null;
+          liveEcgPhase = 0;
+          liveEcgSubPixel = 0;
+          livePhase = 0;
+          drawLocalWaveform();
+        });
+        el.addEventListener("input", function () {
+          liveEcgBuffer = null;
+          liveEcgPhase = 0;
+          liveEcgSubPixel = 0;
+          livePhase = 0;
+          drawLocalWaveform();
+        });
       });
 
       var resizeTimeout;
@@ -2150,21 +2321,23 @@
         if (liveSmooth) {
           btnLiveSmooth.classList.add("smooth-active");
           smoothLabel.textContent = "平滑开";
-          liveOffscreen = null;
-          liveOffscreenCtx = null;
+          liveEcgBuffer = null;
+          liveEcgPhase = 0;
+          liveEcgSubPixel = 0;
         } else {
           btnLiveSmooth.classList.remove("smooth-active");
           smoothLabel.textContent = "平滑";
-          liveOffscreen = null;
-          liveOffscreenCtx = null;
+          liveEcgBuffer = null;
+          liveEcgPhase = 0;
+          liveEcgSubPixel = 0;
         }
       });
 
       $("#btnLiveRefresh").addEventListener("click", function () {
         try {
-          if (liveSmooth && liveOffscreen && liveOffscreenCtx) {
-            liveOffscreenCtx.clearRect(0, 0, liveOffscreen.width, liveOffscreen.height);
-          }
+          liveEcgBuffer = null;
+          liveEcgPhase = 0;
+          liveEcgSubPixel = 0;
           drawLiveFrame(liveFrameInterval);
         } catch (e) {
           setLiveError("手动刷新失败");
@@ -2188,8 +2361,15 @@
       });
 
       liveFpsSelect.addEventListener("change", function () {
-        liveTargetFps = parseInt(liveFpsSelect.value) || 30;
+        liveTargetFps = parseFloat(liveFpsSelect.value) || 30;
         liveFrameInterval = 1000 / liveTargetFps;
+      });
+
+      liveCyclesSelect.addEventListener("change", function () {
+        liveEcgBuffer = null;
+        liveEcgPhase = 0;
+        liveEcgSubPixel = 0;
+        livePhase = 0;
       });
 
       window.addEventListener("beforeunload", function () {

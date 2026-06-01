@@ -162,8 +162,11 @@
   function stopAllAudio() {
     for (var i = activeOscillators.length - 1; i >= 0; i--) {
       try {
-        activeOscillators[i].stop();
-        activeOscillators[i].disconnect();
+        activeOscillators[i].osc.stop();
+        activeOscillators[i].osc.disconnect();
+      } catch (e) { }
+      try {
+        activeOscillators[i].gain.disconnect();
       } catch (e) { }
     }
     activeOscillators = [];
@@ -186,10 +189,12 @@
     osc.start(startTime);
     osc.stop(startTime + duration + 0.01);
 
-    activeOscillators.push(osc);
+    var nodePair = { osc: osc, gain: gain };
+    activeOscillators.push(nodePair);
     osc.onended = function () {
-      var idx = activeOscillators.indexOf(osc);
+      var idx = activeOscillators.indexOf(nodePair);
       if (idx !== -1) activeOscillators.splice(idx, 1);
+      try { gain.disconnect(); } catch (e) { }
     };
   }
 
@@ -804,7 +809,10 @@
     var gap = getGap();
     var periodMs = duration + gap;
     var cyclesToShow = parseInt(liveCyclesSelect.value) || 3;
-    var msPerPixel = periodMs * cyclesToShow / plotW;
+
+    var wavePeriodMs = 1000 / freq;
+    var totalWaveDuration = wavePeriodMs * cyclesToShow;
+    var msPerPixel = totalWaveDuration / plotW;
 
     if (liveSmooth) {
       if (!liveEcgBuffer || liveEcgBufferSize !== Math.round(plotW)) {
@@ -812,22 +820,26 @@
         liveEcgBuffer = new Float32Array(liveEcgBufferSize);
         liveEcgPhase = 0;
         liveEcgSubPixel = 0;
+        for (var initIdx = 0; initIdx < liveEcgBufferSize; initIdx++) {
+          var phase = (freq * initIdx * msPerPixel) / 1000;
+          liveEcgBuffer[initIdx] = sampleWave(waveType, phase) * volume;
+        }
       }
-      liveEcgSubPixel += (freq / 8000) * 200 * (dt / 1000);
+
+      var scrollSpeed = plotW * 0.5;
+      liveEcgSubPixel += scrollSpeed * (dt / 1000);
       var scrollPixels = Math.floor(liveEcgSubPixel);
       liveEcgSubPixel -= scrollPixels;
-      if (scrollPixels >= liveEcgBufferSize) scrollPixels = liveEcgBufferSize - 1;
-      if (scrollPixels > 0) {
-        liveEcgBuffer.copyWithin(scrollPixels, 0, liveEcgBufferSize - scrollPixels);
-      }
-      liveEcgPhase += scrollPixels * msPerPixel;
-      if (liveEcgPhase >= periodMs) liveEcgPhase -= periodMs;
+      if (scrollPixels > liveEcgBufferSize) scrollPixels = liveEcgBufferSize;
 
-      var fillCount = scrollPixels > 0 ? scrollPixels : 1;
-      for (var i = 0; i < fillCount; i++) {
-        var t = liveEcgPhase - i * msPerPixel;
-        while (t < 0) t += periodMs;
-        liveEcgBuffer[i] = sampleCycle(t, periodMs, duration, freq, waveType) * volume;
+      if (scrollPixels > 0) {
+        liveEcgBuffer.copyWithin(0, scrollPixels, liveEcgBufferSize);
+        for (var i = 0; i < scrollPixels; i++) {
+          liveEcgPhase += msPerPixel;
+          var phase = (freq * liveEcgPhase) / 1000;
+          var writeIdx = liveEcgBufferSize - scrollPixels + i;
+          liveEcgBuffer[writeIdx] = sampleWave(waveType, phase) * volume;
+        }
       }
 
       var glowMargin = 4;
@@ -851,8 +863,8 @@
       }
       ctx.stroke();
 
-      var cursorX = margin.left;
-      var cursorY = midY - liveEcgBuffer[0] * ampRange;
+      var cursorX = margin.left + liveEcgBufferSize - 1;
+      var cursorY = midY - liveEcgBuffer[liveEcgBufferSize - 1] * ampRange;
       ctx.beginPath();
       ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
       ctx.fillStyle = colors.wave;
@@ -862,8 +874,7 @@
       ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
       ctx.fill();
     } else {
-      livePhase += (freq / 8000) * 800 * (dt / 1000);
-      if (livePhase >= periodMs) livePhase -= periodMs;
+      livePhase += plotW * msPerPixel * 0.5 * (dt / 1000);
 
       var glowMargin = 4;
       ctx.strokeStyle = colors.waveGlow;
@@ -871,9 +882,8 @@
       ctx.beginPath();
       for (var x = -glowMargin; x < w + glowMargin; x += 1) {
         var t = livePhase + (x - margin.left) * msPerPixel;
-        while (t >= periodMs) t -= periodMs;
-        while (t < 0) t += periodMs;
-        var valGlow = sampleCycle(t, periodMs, duration, freq, waveType);
+        var phase = (freq * t) / 1000;
+        var valGlow = sampleWave(waveType, phase);
         var yGlow = midY - valGlow * ampRange * volume;
         if (x === -glowMargin) ctx.moveTo(x, yGlow);
         else ctx.lineTo(x, yGlow);
@@ -885,9 +895,8 @@
       ctx.beginPath();
       for (var x = 0; x < w; x += 1) {
         var t = livePhase + (x - margin.left) * msPerPixel;
-        while (t >= periodMs) t -= periodMs;
-        while (t < 0) t += periodMs;
-        var val = sampleCycle(t, periodMs, duration, freq, waveType);
+        var phase = (freq * t) / 1000;
+        var val = sampleWave(waveType, phase);
         var y = midY - val * ampRange * volume;
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
@@ -902,20 +911,26 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
 
-    var totalMs = periodMs * cyclesToShow;
+    var totalMs = totalWaveDuration;
     var tickStepMs;
-    if (totalMs <= 300) tickStepMs = 25;
+    if (totalMs <= 2) tickStepMs = 0.25;
+    else if (totalMs <= 5) tickStepMs = 0.5;
+    else if (totalMs <= 10) tickStepMs = 1;
+    else if (totalMs <= 25) tickStepMs = 2.5;
+    else if (totalMs <= 50) tickStepMs = 5;
+    else if (totalMs <= 100) tickStepMs = 10;
+    else if (totalMs <= 300) tickStepMs = 25;
     else if (totalMs <= 600) tickStepMs = 50;
     else if (totalMs <= 1500) tickStepMs = 100;
-    else if (totalMs <= 3000) tickStepMs = 200;
-    else tickStepMs = 500;
+    else tickStepMs = 200;
 
     var tickCount = Math.ceil(totalMs / tickStepMs);
     for (var xt = 0; xt <= tickCount; xt++) {
       var tMs = xt * tickStepMs;
       if (tMs > totalMs) tMs = totalMs;
       var tx = margin.left + (tMs / totalMs) * plotW;
-      ctx.fillText(tMs + "ms", tx, midY + baseAmpRange + 4);
+      var label = tMs < 1 ? tMs.toFixed(2) + "ms" : tMs < 10 ? tMs.toFixed(1) + "ms" : Math.round(tMs) + "ms";
+      ctx.fillText(label, tx, midY + baseAmpRange + 4);
 
       ctx.strokeStyle = "rgba(250, 249, 245, 0.08)";
       ctx.lineWidth = 0.5;
