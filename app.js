@@ -71,6 +71,7 @@
   var pauseIcon = $("#pauseIcon");
   var pauseLabel = $("#pauseLabel");
   var liveFpsSelect = $("#liveFpsSelect");
+  var liveCyclesSelect = $("#liveCyclesSelect");
   var lwpFreq = $("#lwpFreq");
   var lwpWave = $("#lwpWave");
   var lwpVol = $("#lwpVol");
@@ -802,7 +803,7 @@
     var duration = getDuration();
     var gap = getGap();
     var periodMs = duration + gap;
-    var cyclesToShow = 3;
+    var cyclesToShow = parseInt(liveCyclesSelect.value) || 3;
     var msPerPixel = periodMs * cyclesToShow / plotW;
 
     if (liveSmooth) {
@@ -1232,6 +1233,13 @@
   liveFpsSelect.addEventListener("change", function () {
     liveTargetFps = parseFloat(liveFpsSelect.value) || 30;
     liveFrameInterval = 1000 / liveTargetFps;
+  });
+
+  liveCyclesSelect.addEventListener("change", function () {
+    liveEcgBuffer = null;
+    liveEcgPhase = 0;
+    liveEcgSubPixel = 0;
+    livePhase = 0;
   });
 
   window.addEventListener("beforeunload", function () {
