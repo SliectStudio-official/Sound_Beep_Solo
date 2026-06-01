@@ -802,7 +802,8 @@
     var duration = getDuration();
     var gap = getGap();
     var periodMs = duration + gap;
-    var samplesPerMs = plotW / periodMs;
+    var cyclesToShow = 3;
+    var msPerPixel = periodMs * cyclesToShow / plotW;
 
     if (liveSmooth) {
       if (!liveEcgBuffer || liveEcgBufferSize !== Math.round(plotW)) {
@@ -818,16 +819,16 @@
       if (scrollPixels > 0) {
         liveEcgBuffer.copyWithin(scrollPixels, 0, liveEcgBufferSize - scrollPixels);
       }
-      liveEcgPhase += scrollPixels / samplesPerMs;
+      liveEcgPhase += scrollPixels * msPerPixel;
       if (liveEcgPhase >= periodMs) liveEcgPhase -= periodMs;
 
       for (var i = 0; i < scrollPixels; i++) {
-        var t = liveEcgPhase - i / samplesPerMs;
+        var t = liveEcgPhase - i * msPerPixel;
         while (t < 0) t += periodMs;
         liveEcgBuffer[i] = sampleCycle(t, periodMs, duration, freq, waveType) * volume;
       }
       if (scrollPixels === 0 && liveEcgBufferSize > 0) {
-        var t0 = liveEcgPhase + liveEcgSubPixel / samplesPerMs;
+        var t0 = liveEcgPhase + liveEcgSubPixel * msPerPixel;
         while (t0 >= periodMs) t0 -= periodMs;
         liveEcgBuffer[0] = sampleCycle(t0, periodMs, duration, freq, waveType) * volume;
       }
@@ -872,7 +873,7 @@
       ctx.lineWidth = 5;
       ctx.beginPath();
       for (var x = -glowMargin; x < w + glowMargin; x += 1) {
-        var t = livePhase + (x - margin.left) / samplesPerMs;
+        var t = livePhase + (x - margin.left) * msPerPixel;
         while (t >= periodMs) t -= periodMs;
         while (t < 0) t += periodMs;
         var valGlow = sampleCycle(t, periodMs, duration, freq, waveType);
@@ -886,7 +887,7 @@
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       for (var x = 0; x < w; x += 1) {
-        var t = livePhase + (x - margin.left) / samplesPerMs;
+        var t = livePhase + (x - margin.left) * msPerPixel;
         while (t >= periodMs) t -= periodMs;
         while (t < 0) t += periodMs;
         var val = sampleCycle(t, periodMs, duration, freq, waveType);
@@ -904,18 +905,19 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
 
+    var totalMs = periodMs * cyclesToShow;
     var tickStepMs;
-    if (periodMs <= 200) tickStepMs = 25;
-    else if (periodMs <= 500) tickStepMs = 50;
-    else if (periodMs <= 1000) tickStepMs = 100;
-    else if (periodMs <= 2000) tickStepMs = 200;
+    if (totalMs <= 300) tickStepMs = 25;
+    else if (totalMs <= 600) tickStepMs = 50;
+    else if (totalMs <= 1500) tickStepMs = 100;
+    else if (totalMs <= 3000) tickStepMs = 200;
     else tickStepMs = 500;
 
-    var tickCount = Math.ceil(periodMs / tickStepMs);
+    var tickCount = Math.ceil(totalMs / tickStepMs);
     for (var xt = 0; xt <= tickCount; xt++) {
       var tMs = xt * tickStepMs;
-      if (tMs > periodMs) tMs = periodMs;
-      var tx = margin.left + (tMs / periodMs) * plotW;
+      if (tMs > totalMs) tMs = totalMs;
+      var tx = margin.left + (tMs / totalMs) * plotW;
       ctx.fillText(tMs + "ms", tx, midY + baseAmpRange + 4);
 
       ctx.strokeStyle = "rgba(250, 249, 245, 0.08)";
