@@ -26,9 +26,6 @@
   var liveEcgBuffer = null;
   var liveEcgBufferSize = 0;
   var liveEcgSubPixel = 0;
-  var liveCycleBuffer = null;
-  var liveCycleSamples = 0;
-  var liveCycleDuration = 0;
   var liveCycleParams = "";
   var liveCycleTimeMs = 0;
 
@@ -662,34 +659,22 @@
     liveAnimId = requestAnimationFrame(animateLiveWaveform);
   }
 
-  function generateCycleBuffer(freq, durationMs, gapMs, waveType, volume) {
-    var T = durationMs + gapMs;
-    var samplesPerMs = 2;
-    var totalSamples = Math.ceil(T * samplesPerMs);
-    var buffer = new Float32Array(totalSamples);
+  function cycleEnvelope(tMs, durationMs) {
     var attackMs = 3;
     var releaseMs = 3;
-    var toneSamples = Math.ceil(durationMs * samplesPerMs);
+    if (tMs >= durationMs) return 0;
+    var env = 1;
+    if (tMs < attackMs) env = tMs / attackMs;
+    else if (tMs > durationMs - releaseMs) env = (durationMs - tMs) / releaseMs;
+    if (env < 0) env = 0;
+    if (env > 1) env = 1;
+    return env;
+  }
 
-    for (var i = 0; i < totalSamples; i++) {
-      var tMs = i / samplesPerMs;
-      if (tMs < durationMs) {
-        var phase = (freq * tMs) / 1000;
-        var v = sampleWave(waveType, phase);
-        var env = 1;
-        if (tMs < attackMs) {
-          env = tMs / attackMs;
-        } else if (tMs > durationMs - releaseMs) {
-          env = (durationMs - tMs) / releaseMs;
-        }
-        if (env < 0) env = 0;
-        if (env > 1) env = 1;
-        buffer[i] = v * volume * env;
-      } else {
-        buffer[i] = 0;
-      }
-    }
-    return { buffer: buffer, samples: totalSamples, duration: T, samplesPerMs: samplesPerMs };
+  function sampleCycle(freq, waveType, volume, tMs, durationMs) {
+    if (tMs >= durationMs) return 0;
+    var phase = (freq * tMs) / 1000;
+    return sampleWave(waveType, phase) * volume * cycleEnvelope(tMs, durationMs);
   }
 
   function drawLiveFrame(dt) {
@@ -826,19 +811,18 @@
     var paramKey = freq + "|" + waveType + "|" + volume + "|" + durationMs + "|" + gapMs;
 
     if (paramKey !== liveCycleParams) {
-      var cycleData = generateCycleBuffer(freq, durationMs, gapMs, waveType, volume);
-      liveCycleBuffer = cycleData.buffer;
-      liveCycleSamples = cycleData.samples;
-      liveCycleDuration = cycleData.duration;
       liveCycleParams = paramKey;
       liveCycleTimeMs = 0;
       liveEcgBuffer = null;
+      liveEcgSubPixel = 0;
     }
 
     var scrollSpeedMs = cycleT / 4;
     liveCycleTimeMs += scrollSpeedMs * (dt / 1000);
     if (liveCycleTimeMs >= cycleT) liveCycleTimeMs -= cycleT;
     if (liveCycleTimeMs < 0) liveCycleTimeMs = 0;
+
+    var pxPerMs = plotW / cycleT;
 
     if (liveSmooth) {
       if (!liveEcgBuffer || liveEcgBufferSize !== Math.round(plotW)) {
@@ -847,7 +831,6 @@
         liveEcgSubPixel = 0;
       }
 
-      var pxPerMs = plotW / cycleT;
       liveEcgSubPixel += pxPerMs * scrollSpeedMs * (dt / 1000);
       var scrollPixels = Math.floor(liveEcgSubPixel);
       liveEcgSubPixel -= scrollPixels;
@@ -857,25 +840,16 @@
         liveEcgBuffer.copyWithin(scrollPixels, 0, liveEcgBufferSize - scrollPixels);
       }
 
-      var samplesPerMs = liveCycleSamples / liveCycleDuration;
       for (var i = 0; i < scrollPixels; i++) {
         var pixelAge = scrollPixels - i;
         var pixelTimeMs = liveCycleTimeMs - pixelAge / pxPerMs;
         while (pixelTimeMs < 0) pixelTimeMs += cycleT;
         while (pixelTimeMs >= cycleT) pixelTimeMs -= cycleT;
-        var sampleIdx = pixelTimeMs * samplesPerMs;
-        var idx0 = Math.floor(sampleIdx) % liveCycleSamples;
-        if (idx0 < 0) idx0 += liveCycleSamples;
-        var idx1 = (idx0 + 1) % liveCycleSamples;
-        var frac = sampleIdx - Math.floor(sampleIdx);
-        liveEcgBuffer[i] = liveCycleBuffer[idx0] * (1 - frac) + liveCycleBuffer[idx1] * frac;
+        liveEcgBuffer[i] = sampleCycle(freq, waveType, volume, pixelTimeMs, durationMs);
       }
 
       if (scrollPixels === 0 && liveEcgBufferSize > 0) {
-        var sampleIdx = liveCycleTimeMs * samplesPerMs;
-        var idx0 = Math.floor(sampleIdx) % liveCycleSamples;
-        if (idx0 < 0) idx0 += liveCycleSamples;
-        liveEcgBuffer[0] = liveCycleBuffer[idx0];
+        liveEcgBuffer[0] = sampleCycle(freq, waveType, volume, liveCycleTimeMs, durationMs);
       }
 
       ctx.strokeStyle = colors.waveGlow;
@@ -909,21 +883,13 @@
       ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
       ctx.fill();
     } else {
-      var pxPerMs = plotW / cycleT;
-      var samplesPerMs = liveCycleSamples / liveCycleDuration;
-
       ctx.strokeStyle = colors.waveGlow;
       ctx.lineWidth = 5;
       ctx.beginPath();
       var firstGlow = true;
       for (var px = 0; px < plotW; px++) {
         var tMs = px / pxPerMs;
-        var sampleIdx = tMs * samplesPerMs;
-        var idx0 = Math.floor(sampleIdx) % liveCycleSamples;
-        if (idx0 < 0) idx0 += liveCycleSamples;
-        var idx1 = (idx0 + 1) % liveCycleSamples;
-        var frac = sampleIdx - Math.floor(sampleIdx);
-        var val = liveCycleBuffer[idx0] * (1 - frac) + liveCycleBuffer[idx1] * frac;
+        var val = sampleCycle(freq, waveType, volume, tMs, durationMs);
         var y = midY - val * ampRange;
         if (firstGlow) { ctx.moveTo(margin.left + px, y); firstGlow = false; }
         else ctx.lineTo(margin.left + px, y);
@@ -936,12 +902,7 @@
       var firstWave = true;
       for (var px2 = 0; px2 < plotW; px2++) {
         var tMs2 = px2 / pxPerMs;
-        var sampleIdx2 = tMs2 * samplesPerMs;
-        var idx0b = Math.floor(sampleIdx2) % liveCycleSamples;
-        if (idx0b < 0) idx0b += liveCycleSamples;
-        var idx1b = (idx0b + 1) % liveCycleSamples;
-        var frac2 = sampleIdx2 - Math.floor(sampleIdx2);
-        var val2 = liveCycleBuffer[idx0b] * (1 - frac2) + liveCycleBuffer[idx1b] * frac2;
+        var val2 = sampleCycle(freq, waveType, volume, tMs2, durationMs);
         var y2 = midY - val2 * ampRange;
         if (firstWave) { ctx.moveTo(margin.left + px2, y2); firstWave = false; }
         else ctx.lineTo(margin.left + px2, y2);
