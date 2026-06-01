@@ -823,15 +823,11 @@
       liveEcgPhase += scrollPixels * msPerPixel;
       if (liveEcgPhase >= periodMs) liveEcgPhase -= periodMs;
 
-      for (var i = 0; i < scrollPixels; i++) {
+      var fillCount = scrollPixels > 0 ? scrollPixels : 1;
+      for (var i = 0; i < fillCount; i++) {
         var t = liveEcgPhase - i * msPerPixel;
         while (t < 0) t += periodMs;
         liveEcgBuffer[i] = sampleCycle(t, periodMs, duration, freq, waveType) * volume;
-      }
-      if (scrollPixels === 0 && liveEcgBufferSize > 0) {
-        var t0 = liveEcgPhase + liveEcgSubPixel * msPerPixel;
-        while (t0 >= periodMs) t0 -= periodMs;
-        liveEcgBuffer[0] = sampleCycle(t0, periodMs, duration, freq, waveType) * volume;
       }
 
       var glowMargin = 4;
