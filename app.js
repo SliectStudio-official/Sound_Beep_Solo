@@ -28,12 +28,12 @@
   var liveEcgBufferSize = 0;
   var liveEcgPhase = 0;
   var liveEcgSubPixel = 0;
-  var liveCycleSamples = null;
-  var liveCycleTimeMs = 0;
-  var liveCycleTotalMs = 0;
-  var liveCycleParams = null;
-  var liveDisplaySamples = null;
-  var liveDisplayPlotW = 0;
+
+  var cycleSamples = null;
+  var cycleDownsampled = [];
+  var cycleTotalMs = 0;
+  var cycleCurrentMs = 0;
+  var cycleLastTimestamp = 0;
 
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -348,6 +348,65 @@
     return result;
   }
 
+  function regenerateCycle() {
+    var freq = getFreq();
+    var duration = getDuration();
+    var gap = getGap();
+    var wave = getWave();
+    var volume = getVolume();
+    cycleTotalMs = duration + gap;
+    if (cycleTotalMs <= 0) { cycleTotalMs = 1; }
+
+    var toneSamples = generateSamples(freq, duration, wave, volume);
+    var silenceSamples = generateSilence(gap);
+    cycleSamples = new Float32Array(toneSamples.length + silenceSamples.length);
+    cycleSamples.set(toneSamples, 0);
+    cycleSamples.set(silenceSamples, toneSamples.length);
+
+    var canvas = $("#liveWaveCanvas");
+    var w = canvas.clientWidth || 400;
+    var margin = { left: 36, right: 8 };
+    var plotW = w - margin.left - margin.right;
+    cycleDownsampled = downsampleForDisplay(cycleSamples, Math.max(200, Math.round(plotW)));
+
+    cycleCurrentMs = 0;
+  }
+
+  function drawTimeAxis(ctx, totalMs, margin, plotW, midY, ampRange, colors) {
+    var stepMs;
+    if (totalMs <= 500) {
+      stepMs = 50;
+    } else if (totalMs <= 2000) {
+      stepMs = 100;
+    } else if (totalMs <= 5000) {
+      stepMs = 200;
+    } else {
+      stepMs = 500;
+    }
+    var tickCount = Math.floor(totalMs / stepMs);
+    if (tickCount < 3) { stepMs = Math.max(10, Math.floor(totalMs / 4)); tickCount = Math.floor(totalMs / stepMs); }
+    if (tickCount > 10) { stepMs = Math.ceil(totalMs / 8 / stepMs) * stepMs; tickCount = Math.floor(totalMs / stepMs); }
+
+    ctx.fillStyle = colors.text;
+    ctx.font = "9px 'JetBrains Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.strokeStyle = colors.grid;
+    ctx.lineWidth = 0.5;
+
+    for (var t = 0; t <= totalMs; t += stepMs) {
+      var tx = margin.left + (t / totalMs) * plotW;
+      ctx.beginPath();
+      ctx.moveTo(tx, midY + ampRange + 2);
+      ctx.lineTo(tx, midY + ampRange + 6);
+      ctx.stroke();
+      ctx.fillText(t + "ms", tx, midY + ampRange + 8);
+    }
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+  }
+
   function renderSequenceTable() {
     var tbody = $("#sequenceBody");
     if (sequence.length === 0) {
@@ -624,6 +683,7 @@
 
   function startLiveWaveform() {
     if (liveAnimId) return;
+    regenerateCycle();
     liveFpsTimer = performance.now();
     liveFpsCounter = 0;
     liveFpsDisplay = liveTargetFps;
@@ -633,7 +693,6 @@
 
   function animateLiveWaveform() {
     if (livePaused) {
-      drawLiveFrame(0);
       liveAnimId = requestAnimationFrame(animateLiveWaveform);
       return;
     }
@@ -789,34 +848,15 @@
 
     ctx.textAlign = "left";
 
-    var duration = getDuration();
-    var gap = getGap();
-    var totalMs = duration + gap;
-    if (totalMs <= 0) totalMs = 1;
-    var paramKey = freq + "|" + waveType + "|" + Math.round(volume * 100) + "|" + duration + "|" + gap;
-
-    if (!liveCycleSamples || liveCycleParams !== paramKey || liveCycleTotalMs !== totalMs || liveDisplayPlotW !== Math.round(plotW)) {
-      var toneSamples = generateSamples(freq, duration, waveType, volume);
-      var silenceSamples = generateSilence(gap);
-      var mergedLen = toneSamples.length + silenceSamples.length;
-      liveCycleSamples = new Float32Array(mergedLen);
-      liveCycleSamples.set(toneSamples, 0);
-      if (silenceSamples.length > 0) {
-        liveCycleSamples.set(silenceSamples, toneSamples.length);
+    if (!livePaused && cycleTotalMs > 0) {
+      cycleCurrentMs += dt;
+      while (cycleCurrentMs >= cycleTotalMs) {
+        cycleCurrentMs -= cycleTotalMs;
       }
-      liveCycleTotalMs = totalMs;
-      liveCycleParams = paramKey;
-      liveDisplaySamples = downsampleForDisplay(liveCycleSamples, Math.round(plotW * (liveSmooth ? 3 : 2)));
-      liveDisplayPlotW = Math.round(plotW);
-      if (liveCycleTimeMs >= liveCycleTotalMs) liveCycleTimeMs = 0;
     }
 
-    if (!livePaused) {
-      liveCycleTimeMs += dt;
-      if (liveCycleTimeMs >= liveCycleTotalMs) {
-        liveCycleTimeMs = liveCycleTimeMs % liveCycleTotalMs;
-      }
-      if (liveCycleTimeMs < 0) liveCycleTimeMs = 0;
+    if (!cycleSamples || cycleDownsampled.length === 0) {
+      regenerateCycle();
     }
 
     ctx.save();
@@ -824,79 +864,59 @@
     ctx.rect(margin.left, margin.top, plotW, plotH);
     ctx.clip();
 
-    var msPerPixel = totalMs / plotW;
-    var displayCount = liveDisplaySamples.length;
-    var samplesPerPixel = displayCount / plotW;
+    var dsLen = cycleDownsampled.length;
+    if (dsLen > 1) {
+      var glowMargin = 4;
+      ctx.strokeStyle = colors.waveGlow;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      for (var xi = 0; xi < dsLen; xi++) {
+        var t = (xi / (dsLen - 1)) * cycleTotalMs;
+        var x = margin.left + (t / cycleTotalMs) * plotW;
+        var y = midY - cycleDownsampled[xi] * ampRange;
+        if (xi === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
 
-    ctx.strokeStyle = colors.waveGlow;
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    for (var x = 0; x < plotW; x++) {
-      var idx = Math.floor(x * samplesPerPixel);
-      if (idx >= displayCount) idx = displayCount - 1;
-      var val = liveDisplaySamples[idx];
-      var y = midY - val * ampRange;
-      if (x === 0) ctx.moveTo(margin.left + x, y);
-      else ctx.lineTo(margin.left + x, y);
+      ctx.strokeStyle = colors.wave;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (var xi2 = 0; xi2 < dsLen; xi2++) {
+        var t2 = (xi2 / (dsLen - 1)) * cycleTotalMs;
+        var x2 = margin.left + (t2 / cycleTotalMs) * plotW;
+        var y2 = midY - cycleDownsampled[xi2] * ampRange;
+        if (xi2 === 0) ctx.moveTo(x2, y2);
+        else ctx.lineTo(x2, y2);
+      }
+      ctx.stroke();
+
+      var cursorX = margin.left + (cycleCurrentMs / cycleTotalMs) * plotW;
+      var cursorIdx = Math.floor((cycleCurrentMs / cycleTotalMs) * (dsLen - 1));
+      if (cursorIdx >= dsLen) cursorIdx = dsLen - 1;
+      var cursorY = midY - cycleDownsampled[cursorIdx] * ampRange;
+      ctx.beginPath();
+      ctx.moveTo(cursorX, margin.top);
+      ctx.lineTo(cursorX, margin.top + plotH);
+      ctx.strokeStyle = "rgba(204, 120, 92, 0.3)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
+      ctx.fillStyle = colors.wave;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cursorX, cursorY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
+      ctx.fill();
     }
-    ctx.stroke();
-
-    ctx.strokeStyle = colors.wave;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (var x = 0; x < plotW; x++) {
-      var idx2 = Math.floor(x * samplesPerPixel);
-      if (idx2 >= displayCount) idx2 = displayCount - 1;
-      var val2 = liveDisplaySamples[idx2];
-      var y2 = midY - val2 * ampRange;
-      if (x === 0) ctx.moveTo(margin.left + x, y2);
-      else ctx.lineTo(margin.left + x, y2);
-    }
-    ctx.stroke();
-
-    var cursorX = margin.left + (liveCycleTimeMs / totalMs) * plotW;
-    var cursorSampleIdx = Math.floor((liveCycleTimeMs / totalMs) * displayCount);
-    if (cursorSampleIdx >= displayCount) cursorSampleIdx = displayCount - 1;
-    var cursorVal = liveDisplaySamples[cursorSampleIdx];
-    var cursorY = midY - cursorVal * ampRange;
-    ctx.beginPath();
-    ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
-    ctx.fillStyle = colors.wave;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(cursorX, cursorY, 6, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(204, 120, 92, 0.25)";
-    ctx.fill();
 
     ctx.restore();
 
-    ctx.fillStyle = colors.text;
-    ctx.font = "9px 'JetBrains Mono', monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-
-    var xTickStep;
-    if (totalMs <= 500) xTickStep = 50;
-    else if (totalMs <= 2000) xTickStep = 100;
-    else xTickStep = 200;
-
-    for (var t = 0; t <= totalMs; t += xTickStep) {
-      var tx = margin.left + t / msPerPixel;
-      if (tx <= w - margin.right + 1) {
-        ctx.fillText(t + "ms", tx, midY + ampRange + 4);
-      }
-    }
-
-    var lastTick = Math.floor(totalMs / xTickStep) * xTickStep;
-    if (totalMs - lastTick > xTickStep * 0.25 && lastTick < totalMs) {
-      var lastTx = margin.left + totalMs / msPerPixel;
-      if (lastTx <= w - margin.right + 1) {
-        ctx.fillText(totalMs + "ms", lastTx, midY + ampRange + 4);
-      }
-    }
-
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
+    drawTimeAxis(ctx, cycleTotalMs, margin, plotW, midY, ampRange, colors);
 
     drawSpectrumBars(ctx, freq, waveType, volume, margin, w, h, midY, colors);
 
@@ -1128,10 +1148,12 @@
   });
 
   [freqSlider, durSlider, gapSlider, volSlider, waveSelect].forEach(function (el) {
-    el.addEventListener("change", drawLocalWaveform);
+    el.addEventListener("change", function () {
+      regenerateCycle();
+      drawLocalWaveform();
+    });
     el.addEventListener("input", function () {
-      liveCycleParams = null;
-      liveCycleTimeMs = 0;
+      regenerateCycle();
       drawLocalWaveform();
     });
   });
@@ -1149,18 +1171,23 @@
     if (liveSmooth) {
       btnLiveSmooth.classList.add("smooth-active");
       smoothLabel.textContent = "平滑开";
-      liveCycleParams = null;
+      liveEcgBuffer = null;
+      liveEcgPhase = 0;
+      liveEcgSubPixel = 0;
     } else {
       btnLiveSmooth.classList.remove("smooth-active");
       smoothLabel.textContent = "平滑";
-      liveCycleParams = null;
+      liveEcgBuffer = null;
+      liveEcgPhase = 0;
+      liveEcgSubPixel = 0;
     }
   });
 
   $("#btnLiveRefresh").addEventListener("click", function () {
     try {
-      liveCycleParams = null;
-      liveCycleTimeMs = 0;
+      liveEcgBuffer = null;
+      liveEcgPhase = 0;
+      liveEcgSubPixel = 0;
       drawLiveFrame(liveFrameInterval);
     } catch (e) {
       setLiveError("手动刷新失败");
@@ -1170,12 +1197,12 @@
   btnLivePause.addEventListener("click", function () {
     livePaused = !livePaused;
     if (livePaused) {
-      livePausedPhase = liveCycleTimeMs;
+      livePausedPhase = livePhase;
       pauseIcon.textContent = "▶";
       pauseLabel.textContent = "继续";
       btnLivePause.classList.add("paused");
     } else {
-      liveCycleTimeMs = livePausedPhase;
+      livePhase = livePausedPhase;
       pauseIcon.textContent = "⏸";
       pauseLabel.textContent = "暂停";
       btnLivePause.classList.remove("paused");
