@@ -28,6 +28,12 @@
   var liveEcgBufferSize = 0;
   var liveEcgPhase = 0;
   var liveEcgSubPixel = 0;
+  var liveEcgWritePos = 0;
+  var liveEcgUpdateTimer = 0;
+  var liveEcgUpdateInterval = 1000 / 30;
+  var liveEcgGapPixels = 0;
+  var liveEcgJitterOffset = 0;
+  var liveEcgJitterTimer = 0;
 
   var PRESETS = [
     { name: "garmin_beep", label: "基础提示", pattern: [{ freq: 800, duration: 80, gap: 30 }, { freq: 4200, duration: 150, gap: 0 }] },
@@ -653,12 +659,16 @@
       var now = performance.now();
       var elapsed = now - liveLastFrameTime;
 
-      if (elapsed < liveFrameInterval) {
+      if (elapsed < liveFrameInterval && !liveSmooth) {
         liveAnimId = requestAnimationFrame(animateLiveWaveform);
         return;
       }
 
-      liveLastFrameTime = now - (elapsed % liveFrameInterval);
+      if (!liveSmooth) {
+        liveLastFrameTime = now - (elapsed % liveFrameInterval);
+      } else {
+        liveLastFrameTime = now;
+      }
 
       liveFpsCounter++;
       if (now - liveFpsTimer >= 1000) {
@@ -818,53 +828,94 @@
       if (!liveEcgBuffer || liveEcgBufferSize !== Math.round(plotW)) {
         liveEcgBufferSize = Math.round(plotW);
         liveEcgBuffer = new Float32Array(liveEcgBufferSize);
+        for (var clearIdx = 0; clearIdx < liveEcgBufferSize; clearIdx++) {
+          liveEcgBuffer[clearIdx] = 0;
+        }
         liveEcgPhase = 0;
         liveEcgSubPixel = 0;
-        for (var initIdx = 0; initIdx < liveEcgBufferSize; initIdx++) {
-          var phase = (freq * initIdx * msPerPixel) / 1000;
-          liveEcgBuffer[initIdx] = sampleWave(waveType, phase) * volume;
-        }
+        liveEcgWritePos = 0;
+        liveEcgUpdateTimer = performance.now();
+        liveEcgGapPixels = Math.max(12, Math.round(plotW * 0.08));
+        liveEcgJitterOffset = 0;
       }
 
-      var scrollSpeed = plotW * 0.5;
-      liveEcgSubPixel += scrollSpeed * (dt / 1000);
-      var scrollPixels = Math.floor(liveEcgSubPixel);
-      liveEcgSubPixel -= scrollPixels;
-      if (scrollPixels > liveEcgBufferSize) scrollPixels = liveEcgBufferSize;
+      var now = performance.now();
+      var shouldUpdate = (now - liveEcgUpdateTimer) >= liveEcgUpdateInterval;
 
-      if (scrollPixels > 0) {
-        liveEcgBuffer.copyWithin(0, scrollPixels, liveEcgBufferSize);
-        for (var i = 0; i < scrollPixels; i++) {
-          liveEcgPhase += msPerPixel;
-          var phase = (freq * liveEcgPhase) / 1000;
-          var writeIdx = liveEcgBufferSize - scrollPixels + i;
-          liveEcgBuffer[writeIdx] = sampleWave(waveType, phase) * volume;
-        }
+      var drawSpeed = plotW * 0.5;
+      liveEcgSubPixel += drawSpeed * (dt / 1000);
+      var advancePixels = Math.floor(liveEcgSubPixel);
+      liveEcgSubPixel -= advancePixels;
+      if (advancePixels > liveEcgBufferSize) advancePixels = liveEcgBufferSize;
+
+      if (shouldUpdate) {
+        liveEcgUpdateTimer = now;
+        var jitterRange = Math.max(8, Math.round(plotW * 0.06));
+        liveEcgJitterOffset = Math.floor(Math.random() * jitterRange);
       }
 
-      var glowMargin = 4;
+      var clearCount = advancePixels + liveEcgGapPixels + liveEcgJitterOffset;
+      for (var clearIdx = 0; clearIdx < clearCount; clearIdx++) {
+        var clearPos = liveEcgWritePos + clearIdx;
+        if (clearPos >= liveEcgBufferSize) clearPos -= liveEcgBufferSize;
+        liveEcgBuffer[clearPos] = 0;
+      }
+
+      for (var i = 0; i < advancePixels; i++) {
+        liveEcgPhase += msPerPixel;
+        var phase = (freq * liveEcgPhase) / 1000;
+        liveEcgBuffer[liveEcgWritePos] = sampleWave(waveType, phase) * volume;
+        liveEcgWritePos++;
+        if (liveEcgWritePos >= liveEcgBufferSize) liveEcgWritePos = 0;
+      }
+
+      var cursorOffset = liveEcgSubPixel;
+      var cursorPos = (liveEcgWritePos - 1 + liveEcgBufferSize) % liveEcgBufferSize;
+      var cursorX = margin.left + liveEcgWritePos - cursorOffset;
+      var cursorY = midY - liveEcgBuffer[cursorPos] * ampRange;
+
       ctx.strokeStyle = colors.waveGlow;
       ctx.lineWidth = 5;
       ctx.beginPath();
+      var first = true;
       for (var xi = 0; xi < liveEcgBufferSize; xi++) {
-        var yGlow = midY - liveEcgBuffer[xi] * ampRange;
-        if (xi === 0) ctx.moveTo(margin.left + xi, yGlow);
-        else ctx.lineTo(margin.left + xi, yGlow);
+        var x = margin.left + xi - cursorOffset;
+        if (x < margin.left) continue;
+        if (x > margin.left + plotW) break;
+        var val = liveEcgBuffer[xi];
+        var yGlow = midY - val * ampRange;
+        if (val === 0) {
+          first = true;
+        } else if (first) {
+          ctx.moveTo(x, yGlow);
+          first = false;
+        } else {
+          ctx.lineTo(x, yGlow);
+        }
       }
       ctx.stroke();
 
       ctx.strokeStyle = colors.wave;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
+      first = true;
       for (var xi2 = 0; xi2 < liveEcgBufferSize; xi2++) {
-        var yVal = midY - liveEcgBuffer[xi2] * ampRange;
-        if (xi2 === 0) ctx.moveTo(margin.left + xi2, yVal);
-        else ctx.lineTo(margin.left + xi2, yVal);
+        var x = margin.left + xi2 - cursorOffset;
+        if (x < margin.left) continue;
+        if (x > margin.left + plotW) break;
+        var val = liveEcgBuffer[xi2];
+        var yVal = midY - val * ampRange;
+        if (val === 0) {
+          first = true;
+        } else if (first) {
+          ctx.moveTo(x, yVal);
+          first = false;
+        } else {
+          ctx.lineTo(x, yVal);
+        }
       }
       ctx.stroke();
 
-      var cursorX = margin.left + liveEcgBufferSize - 1;
-      var cursorY = midY - liveEcgBuffer[liveEcgBufferSize - 1] * ampRange;
       ctx.beginPath();
       ctx.arc(cursorX, cursorY, 3, 0, Math.PI * 2);
       ctx.fillStyle = colors.wave;
@@ -1177,6 +1228,8 @@
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveEcgWritePos = 0;
+      liveEcgJitterOffset = 0;
       livePhase = 0;
       drawLocalWaveform();
     });
@@ -1184,6 +1237,8 @@
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveEcgWritePos = 0;
+      liveEcgJitterOffset = 0;
       livePhase = 0;
       drawLocalWaveform();
     });
@@ -1205,12 +1260,16 @@
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveEcgWritePos = 0;
+      liveEcgJitterOffset = 0;
     } else {
       btnLiveSmooth.classList.remove("smooth-active");
       smoothLabel.textContent = "平滑";
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveEcgWritePos = 0;
+      liveEcgJitterOffset = 0;
     }
   });
 
@@ -1219,6 +1278,8 @@
       liveEcgBuffer = null;
       liveEcgPhase = 0;
       liveEcgSubPixel = 0;
+      liveEcgWritePos = 0;
+      liveEcgJitterOffset = 0;
       drawLiveFrame(liveFrameInterval);
     } catch (e) {
       setLiveError("手动刷新失败");
@@ -1244,12 +1305,15 @@
   liveFpsSelect.addEventListener("change", function () {
     liveTargetFps = parseFloat(liveFpsSelect.value) || 30;
     liveFrameInterval = 1000 / liveTargetFps;
+    liveEcgUpdateInterval = liveFrameInterval;
   });
 
   liveCyclesSelect.addEventListener("change", function () {
     liveEcgBuffer = null;
     liveEcgPhase = 0;
     liveEcgSubPixel = 0;
+    liveEcgWritePos = 0;
+    liveEcgJitterOffset = 0;
     livePhase = 0;
   });
 
