@@ -9,7 +9,7 @@
 <body>
   <main class="app-layout">
 
-    <div class="panel panel-left" id="panelLeft">
+    <div class="panel panel-left">
 
       <header class="panel-header">
         <pre class="ascii-logo">
@@ -21,7 +21,7 @@
 </pre>
         <p class="subtitle">电子提示音可视化生成器</p>
         <p class="subtitle-desc">频率 / 波形 / 序列 / 导出 — 实时调节，即时预览</p>
-        <p class="subtitle-desc">版本 260601.1758</p>
+        <p class="subtitle-desc">版本 260601.1800</p>
       </header>
 
       <div class="panel-section presets-section">
@@ -123,12 +123,11 @@
                   <option value="2">2</option>
                   <option value="3" selected>3</option>
                   <option value="5">5</option>
-                  <option value="10">10</option>
                 </select>
               </label>
             </div>
           </div>
-          <div class="live-wave-container" id="liveWaveContainer">
+          <div class="live-wave-container">
             <canvas id="liveWaveCanvas"></canvas>
             <div class="live-wave-overlay" id="liveWaveOverlay">
               <span class="live-wave-state" id="liveWaveState">初始化中...</span>
@@ -150,7 +149,7 @@
       </div>
     </div>
 
-    <div class="panel panel-right" id="panelRight">
+    <div class="panel panel-right">
 
       <div class="panel-section sequence-section">
         <h2>序列编辑器</h2>
@@ -192,7 +191,7 @@
       <div class="panel-section waveform-section">
         <h2>序列波形预览</h2>
         <hr>
-        <div class="waveform-container" id="seqWaveformContainer">
+        <div class="waveform-container">
           <canvas id="waveformCanvas"></canvas>
           <div class="progress-bar" id="waveformProgress"></div>
         </div>
